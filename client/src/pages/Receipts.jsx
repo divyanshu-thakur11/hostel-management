@@ -39,6 +39,8 @@ export default function Receipts() {
   const [showModal, setShowModal]   = useState(false);
   const [showPrint, setShowPrint]   = useState(null);
   const [form, setForm]             = useState(EMPTY);
+  const [dueModal, setDueModal]     = useState(null);   // part-pay receipt to make due receipt for
+  const [dueForm, setDueForm]       = useState({ modeOfPayment:'cash', receiptDate:'', notes:'' });
   const [loading, setLoading]       = useState(false);
   const [search, setSearch]         = useState('');
   const [roomF, setRoomF]           = useState('');
@@ -247,6 +249,42 @@ export default function Receipts() {
     catch(e) { toast('Error deleting', 'error'); }
   };
 
+  // Create a due-clearance receipt from an outstanding part payment
+  const saveDueReceipt = async () => {
+    if (!dueModal) return;
+    try {
+      const nums = await receiptsAPI.getNextNumbers();
+      const payload = {
+        ...nums.data,
+        roomNumber: dueModal.roomNumber,
+        memberId: dueModal.memberId,
+        memberName: dueModal.memberName,
+        memberMobile: dueModal.memberMobile,
+        members: dueModal.members || [],
+        packageName: 'other',
+        paymentType: 'other',
+        totalAmount: dueModal.balanceDue,
+        amountPaid: dueModal.balanceDue,
+        balanceDue: 0,
+        isPartPayment: false,
+        modeOfPayment: dueForm.modeOfPayment,
+        receiptDate: dueForm.receiptDate || new Date().toISOString().split('T')[0],
+        notes: dueForm.notes || `Due clearance against Bill No. ${dueModal.billNumber}`,
+        amountInWords: numberToWords(dueModal.balanceDue) + ' Rupees Only',
+        fromDate: dueModal.fromDate,
+        toDate: dueModal.toDate,
+        monthYear: dueModal.monthYear,
+        billingMonth: dueModal.billingMonth,
+      };
+      await receiptsAPI.create(payload);
+      toast(`Due receipt created for ₹${dueModal.balanceDue.toLocaleString('en-IN')}`);
+      setDueModal(null);
+      loadReceipts(page);
+    } catch(e) {
+      toast(e.response?.data?.message || 'Error creating due receipt', 'error');
+    }
+  };
+
   const openModal = async () => {
     try {
       const nums = await receiptsAPI.getNextNumbers();
@@ -333,11 +371,19 @@ export default function Receipts() {
                       </td>
                       <td><span className={`badge ${r.modeOfPayment==='online'?'badge-blue':'badge-green'}`} style={{fontSize:'0.68rem'}}>{r.modeOfPayment||'cash'}</span></td>
                       <td>
-                        <div style={{display:'flex',gap:4}}>
+                        <div style={{display:'flex',gap:4,flexWrap:'wrap'}}>
                           <button className="btn btn-success btn-xs" onClick={()=>setShowPrint(r)}>🖨</button>
                           {(r.memberMobile||roomMembers[0]?.mobileNo) && (
                             <button className="btn btn-xs" style={{background:'#25d366',color:'white',border:'none'}}
                               onClick={()=>whatsapp.sendReceipt(r.memberMobile||'',r)} title="WhatsApp">📱</button>
+                          )}
+                          {r.isPartPayment && (r.balanceDue||0) > 0 && (
+                            <button className="btn btn-xs"
+                              style={{background:'#f39c12',color:'white',border:'none',fontWeight:700,whiteSpace:'nowrap'}}
+                              onClick={()=>{ setDueModal(r); setDueForm({ modeOfPayment:'cash', receiptDate: new Date().toISOString().split('T')[0], notes:'' }); }}
+                              title="Generate due clearance receipt">
+                              ⚠️ Due
+                            </button>
                           )}
                           <button className="btn btn-danger btn-xs" onClick={()=>del(r._id)}>Del</button>
                         </div>
@@ -530,6 +576,55 @@ export default function Receipts() {
                 <button style={{background:'#25d366',color:'white',border:'none',padding:'9px 16px',borderRadius:7,cursor:'pointer',fontWeight:700,fontSize:'0.88rem',fontFamily:'Rajdhani'}}
                   onClick={()=>whatsapp.sendReceipt(showPrint.memberMobile,showPrint)}>📱 WhatsApp</button>
               )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Due Receipt Modal ──────────────────────────────────────────────── */}
+      {dueModal && (
+        <div className="modal-overlay" onClick={e=>e.target===e.currentTarget&&setDueModal(null)}>
+          <div className="modal" style={{maxWidth:460}}>
+            <div className="modal-header">
+              <h3>⚠️ Generate Due Receipt</h3>
+              <button className="close-btn" onClick={()=>setDueModal(null)}>✕</button>
+            </div>
+            <div className="modal-body">
+              <div style={{background:'rgba(243,156,18,0.08)',border:'1px solid rgba(243,156,18,0.4)',borderRadius:6,padding:'12px 14px',marginBottom:16,fontSize:'0.88rem'}}>
+                <strong>{dueModal.memberName}</strong> · Room {dueModal.roomNumber}<br/>
+                <span style={{color:'var(--text2)',fontSize:'0.8rem'}}>Original Bill: <strong>{dueModal.billNumber}</strong></span><br/>
+                <div style={{marginTop:8,display:'flex',justifyContent:'space-between'}}>
+                  <span>Total Bill: ₹{(dueModal.totalAmount||0).toLocaleString('en-IN')}</span>
+                  <span>Already Paid: ₹{(dueModal.amountPaid||0).toLocaleString('en-IN')}</span>
+                </div>
+                <div style={{marginTop:6,fontFamily:'Rajdhani',fontSize:'1.2rem',fontWeight:700,color:'#c0392b'}}>
+                  Balance Due: ₹{(dueModal.balanceDue||0).toLocaleString('en-IN')}
+                </div>
+              </div>
+              <div className="form-grid">
+                <div className="form-group">
+                  <label>Payment Mode</label>
+                  <select value={dueForm.modeOfPayment} onChange={e=>setDueForm(p=>({...p,modeOfPayment:e.target.value}))}>
+                    <option value="cash">Cash / नगद</option>
+                    <option value="online">Online / ऑनलाइन</option>
+                  </select>
+                </div>
+                <div className="form-group">
+                  <label>Receipt Date</label>
+                  <input type="date" value={dueForm.receiptDate} onChange={e=>setDueForm(p=>({...p,receiptDate:e.target.value}))} />
+                </div>
+                <div className="form-group full">
+                  <label>Notes (optional)</label>
+                  <input value={dueForm.notes} onChange={e=>setDueForm(p=>({...p,notes:e.target.value}))} placeholder={`Due clearance against ${dueModal.billNumber}`} />
+                </div>
+              </div>
+            </div>
+            <div className="modal-footer">
+              <button className="btn btn-secondary" onClick={()=>setDueModal(null)}>Cancel</button>
+              <button className="btn btn-primary" onClick={saveDueReceipt}
+                style={{background:'#e67e22',border:'1px solid #d35400'}}>
+                Generate Due Receipt — ₹{(dueModal.balanceDue||0).toLocaleString('en-IN')}
+              </button>
             </div>
           </div>
         </div>

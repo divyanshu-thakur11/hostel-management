@@ -119,19 +119,42 @@ export default api;
 // ── WhatsApp Messaging ────────────────────────────────────────────────────────
 export const whatsapp = {
   sendReceipt: (mobile, receipt) => {
-    const num = `91${String(mobile).replace(/\D/g,'').replace(/^91/,'')}`;
+    const num = `91${String(mobile).replace(/\D/g,'').replace(/^91/,'').slice(-10)}`;
+    const date = new Date(receipt.receiptDate).toLocaleDateString('en-IN', { day:'2-digit', month:'short', year:'numeric' });
+    const paidAmt = receipt.isPartPayment ? (receipt.amountPaid || 0) : (receipt.totalAmount || 0);
+    const PKGl = { rent:'Rent / किराया', advance:'Advance / एडवांस', electric:'Electric / बिजली', final:'Final Bill / अंतिम', other:'Other / अन्य' };
+    const typeLabel = PKGl[receipt.packageName] || receipt.packageName || '';
+    const modeLabel = receipt.modeOfPayment === 'online' ? 'Online / ऑनलाइन' : 'Cash / नगद';
+    const membersList = receipt.members?.length > 0 ? receipt.members.map(m=>m.name).join(', ') : (receipt.memberName || '—');
+
     const lines = [
-      `🏠 *HOSTEL RECEIPT*`,`━━━━━━━━━━━━━━━━━━`,
-      `📋 Bill No: ${receipt.billNumber||receipt.receiptNumber}`,
-      `📅 Date: ${new Date(receipt.receiptDate).toLocaleDateString('en-IN')}`,``,
-      `👤 Name: ${receipt.memberName}`,`🚪 Room No: ${receipt.roomNumber}`,
-      `💳 Type: ${(receipt.packageName||'').toUpperCase()}`,``,
-      `💰 Amount: ₹${receipt.totalAmount}`,
-      receipt.amountInWords ? `   (${receipt.amountInWords})` : '',
-      `💵 Mode: ${(receipt.modeOfPayment||'').toUpperCase()}`,
-      receipt.notes ? `📝 Notes: ${receipt.notes}` : '',``,`✅ Payment received. Thank you!`,
-    ].filter(Boolean).join('\n');
-    window.open(`https://wa.me/${num}?text=${encodeURIComponent(lines)}`, '_blank');
+      `🏠 *HOSTEL RECEIPT*`,
+      `━━━━━━━━━━━━━━━━━━`,
+      `📋 Bill No: *${receipt.billNumber || receipt.receiptNumber || '—'}*`,
+      `📅 Date: ${date}`,
+      ``,
+      `👤 Name: *${membersList}*`,
+      `🚪 Room No: *${receipt.roomNumber || '—'}*`,
+      `💳 Type: ${typeLabel}`,
+      `💵 Mode: ${modeLabel}`,
+      ``,
+    ];
+
+    if (receipt.isPartPayment && (receipt.balanceDue || 0) > 0) {
+      lines.push(`📊 Total Bill: ₹${(receipt.totalAmount||0).toLocaleString('en-IN')}`);
+      lines.push(`✅ Paid Today: *₹${paidAmt.toLocaleString('en-IN')}*`);
+      if (receipt.amountInWords) lines.push(`   (${receipt.amountInWords})`);
+      lines.push(`❗ *Balance Due: ₹${(receipt.balanceDue||0).toLocaleString('en-IN')}*`);
+    } else {
+      lines.push(`💰 *Amount: ₹${paidAmt.toLocaleString('en-IN')}*`);
+      if (receipt.amountInWords) lines.push(`   (${receipt.amountInWords})`);
+    }
+
+    if (receipt.notes) { lines.push(``); lines.push(`📝 Notes: ${receipt.notes}`); }
+    lines.push(``);
+    lines.push(`✅ Payment received. Thank you! 🙏`);
+
+    window.open(`https://wa.me/${num}?text=${encodeURIComponent(lines.join('\n'))}`, '_blank');
   },
   sendFinalBill: (mobile, memberName, roomNo, grandTotal, breakdown) => {
     const num = `91${String(mobile).replace(/\D/g,'').replace(/^91/,'')}`;
@@ -170,4 +193,4 @@ export const whatsapp = {
     const num = `91${String(mobile).replace(/\D/g,'').replace(/^91/,'')}`;
     window.open(`https://wa.me/${num}?text=${encodeURIComponent(message)}`, '_blank');
   },
-};  
+};

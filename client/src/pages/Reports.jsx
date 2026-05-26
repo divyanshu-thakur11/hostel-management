@@ -6,7 +6,7 @@ export default function Reports() {
   const [receipts, setReceipts] = useState([]);
   const [salary, setSalary] = useState([]);
   const [tab, setTab] = useState('overview');
-  const [filters, setFilters] = useState({ room: '', mode: '', type: '', search: '', from: '', to: '' });
+  const [filters, setFilters] = useState({ room: '', mode: '', type: '', search: '', from: '', to: '', partPay: '' });
   const [loading, setLoading] = useState(true);
   const [exporting, setExporting] = useState('');
 
@@ -40,6 +40,7 @@ export default function Reports() {
     (!filters.room || String(r.roomNumber) === filters.room) &&
     (!filters.mode || r.modeOfPayment === filters.mode) &&
     (!filters.type || r.packageName === filters.type) &&
+    (!filters.partPay || (filters.partPay === 'yes' ? r.isPartPayment : !r.isPartPayment)) &&
     (!filters.search || (r.memberName || '').toLowerCase().includes(filters.search.toLowerCase()) || String(r.roomNumber).includes(filters.search) || (r.billNumber || '').includes(filters.search)) &&
     (!filters.from || new Date(r.receiptDate) >= new Date(filters.from)) &&
     (!filters.to || new Date(r.receiptDate) <= new Date(filters.to))
@@ -186,7 +187,13 @@ export default function Reports() {
               <option value="rent">Rent</option>
               <option value="advance">Advance</option>
               <option value="electric">Electric</option>
+              <option value="final">Final Bill</option>
               <option value="other">Other</option>
+            </select>
+            <select style={selStyle} value={filters.partPay} onChange={e => setFilters(p => ({ ...p, partPay: e.target.value }))}>
+              <option value="">All Payments</option>
+              <option value="yes">Part Payments Only</option>
+              <option value="no">Full Payments Only</option>
             </select>
             <input type="date" style={selStyle} value={filters.from} onChange={e => setFilters(p => ({ ...p, from: e.target.value }))} title="From date" />
             <input type="date" style={selStyle} value={filters.to} onChange={e => setFilters(p => ({ ...p, to: e.target.value }))} title="To date" />
@@ -197,22 +204,26 @@ export default function Reports() {
           </div>
           <div className="table-wrap">
             <table>
-              <thead><tr><th>Date</th><th>Bill No</th><th>Room</th><th>Member</th><th>Type</th><th>Mode</th><th>Rent</th><th>Electric</th><th>Advance</th><th>Total</th></tr></thead>
+              <thead><tr><th>Date</th><th>Bill No</th><th>Room</th><th>Member</th><th>Type</th><th>Mode</th><th>Total</th><th>Paid</th><th style={{color:'var(--danger)'}}>Balance Due</th></tr></thead>
               <tbody>
                 {filteredReceipts.length === 0 ? (
-                  <tr><td colSpan={10}><div className="empty-state"><div className="empty-icon">📊</div><p>No records found</p></div></td></tr>
+                  <tr><td colSpan={9}><div className="empty-state"><div className="empty-icon">📊</div><p>No records found</p></div></td></tr>
                 ) : filteredReceipts.map(r => (
                   <tr key={r._id}>
                     <td style={{ fontSize: '0.8rem' }}>{new Date(r.receiptDate).toLocaleDateString('en-IN')}</td>
                     <td style={{ fontFamily: 'monospace', fontSize: '0.78rem', color: 'var(--text3)' }}>{r.billNumber || '—'}</td>
                     <td><span className="badge badge-blue">R{r.roomNumber}</span></td>
                     <td style={{ fontWeight: 500 }}>{r.memberName || '—'}</td>
-                    <td><span className="badge badge-yellow">{r.packageName}</span></td>
+                    <td>
+                      <span className="badge badge-yellow">{r.packageName}</span>
+                      {r.isPartPayment && <span style={{marginLeft:4,fontSize:'0.65rem',background:'rgba(243,156,18,0.15)',color:'#e67e22',padding:'1px 6px',borderRadius:8}}>Part</span>}
+                    </td>
                     <td><span className={`badge ${r.modeOfPayment === 'cash' ? 'badge-green' : 'badge-blue'}`}>{r.modeOfPayment}</span></td>
-                    <td>{r.rent ? `₹${fmt(r.rent)}` : '—'}</td>
-                    <td>{r.electric ? `₹${fmt(r.electric)}` : '—'}</td>
-                    <td>{r.advance ? `₹${fmt(r.advance)}` : '—'}</td>
-                    <td style={{ color: 'var(--accent)', fontWeight: 700 }}>₹{fmt(r.totalAmount)}</td>
+                    <td style={{ fontWeight: 600 }}>₹{fmt(r.totalAmount)}</td>
+                    <td style={{ color: 'var(--success)', fontWeight: 600 }}>₹{fmt(r.amountPaid || r.totalAmount)}</td>
+                    <td style={{ color: (r.balanceDue||0) > 0 ? 'var(--danger)' : 'var(--text3)', fontWeight: (r.balanceDue||0) > 0 ? 700 : 400 }}>
+                      {(r.balanceDue||0) > 0 ? `₹${fmt(r.balanceDue)}` : '—'}
+                    </td>
                   </tr>
                 ))}
               </tbody>

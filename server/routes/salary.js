@@ -7,7 +7,7 @@ const { authMiddleware, ownerOnly } = require('../middleware/auth');
 router.use(authMiddleware, ownerOnly);
 
 const getHostelId = async (req) => {
-  const hId = req.query.hostelId || req.body?.hostelId;
+  const hId = req.hostelId; // from JWT — never from client
   if (hId) return hId;
   const first = await Hostel.findOne({ isActive: true }).sort({ createdAt: 1 });
   return first?._id;

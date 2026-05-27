@@ -20,6 +20,7 @@ import AuditLog from './pages/AuditLog';
 import DuesAndPayments from './pages/DuesAndPayments';
 import { authAPI, hostelAPI, notificationsAPI } from './utils/api';
 import { HostelProvider, useHostel } from './context/HostelContext';
+import ForceChangePassword from './pages/ForceChangePassword';
 
 const OWNER_NAV = [
   { path: '/',             label: 'Dashboard',       icon: '📊' },
@@ -75,10 +76,9 @@ function Sidebar({ user, activeHostel, unreadCount, sidebarOpen, onClose, onLogo
     e.preventDefault(); setSwitchError(''); setSwitchLoading(true);
     try {
       const res = await authAPI.login(switchForm);
-      const { token, user: newUser } = res.data;
+      const { user: newUser, requirePasswordChange } = res.data;
       if (newUser.role !== targetRole) { setSwitchError(`Not a ${targetRole} account.`); setSwitchLoading(false); return; }
-      localStorage.setItem('hm_token', token); localStorage.setItem('hm_user', JSON.stringify(newUser));
-      if (newUser.hostelId) localStorage.setItem('hm_hostel_id', newUser.hostelId);
+      localStorage.setItem('hm_user', JSON.stringify(newUser));
       setShowSwitch(false); setSwitchForm({ username: '', password: '' });
       navigate('/'); onSwitchRole(newUser); onClose();
     } catch(err) { setSwitchError(err.response?.data?.message || 'Login failed.'); }
@@ -206,16 +206,16 @@ function Sidebar({ user, activeHostel, unreadCount, sidebarOpen, onClose, onLogo
 
 function AppShell() {
   const [user, setUser] = useState(() => { try { return JSON.parse(localStorage.getItem('hm_user')); } catch { return null; } });
+  const [mustChangePw, setMustChangePw] = useState(false);
   const { activeHostel, loadHostel, switchHostel } = useHostel();
   const [unreadCount, setUnreadCount] = useState(0);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const toast = useToast();
 
-  const doLogout = useCallback((reason) => {
-    localStorage.removeItem('hm_token');
+  const doLogout = useCallback(async (reason) => {
+    try { await authAPI.logout(); } catch(_) {}
     localStorage.removeItem('hm_user');
-    localStorage.removeItem('hm_hostel_id');
-    setUser(null); setActiveHostel(null); setUnreadCount(0);
+    setUser(null); setMustChangePw(false); setUnreadCount(0);
     if (reason === 'inactivity') toast('Logged out due to 2 hours of inactivity', 'error');
   }, [toast]);
 
@@ -236,11 +236,12 @@ function AppShell() {
     return () => clearInterval(iv);
   }, [user, loadHostel, pollNotifications]);
 
-  const handleLogin       = (u) => setUser(u);
+  const handleLogin       = (u, requirePasswordChange) => { setUser(u); if (requirePasswordChange) setMustChangePw(true); };
   const handleSwitchRole  = (newUser) => { setUser(newUser); loadHostel(); };
   const handleHostelSwitch = (h) => switchHostel(h);
 
   if (!user) return <Login onLogin={handleLogin} />;
+  if (mustChangePw) return <ForceChangePassword user={user} onDone={() => setMustChangePw(false)} />;
 
   return (
     <div className="app-shell">
@@ -288,4 +289,3 @@ export default function App() {
     <BrowserRouter><ToastProvider><HostelProvider><AppShell /></HostelProvider></ToastProvider></BrowserRouter>
   );
 }
-  

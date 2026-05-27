@@ -1,5 +1,5 @@
 const mongoose = require('mongoose');
-const bcrypt = require('bcryptjs');
+const bcrypt   = require('bcryptjs');
 
 const activitySchema = new mongoose.Schema({
   action: String, path: String, method: String,
@@ -7,17 +7,18 @@ const activitySchema = new mongoose.Schema({
 }, { _id: false });
 
 const userSchema = new mongoose.Schema({
-  username: { type: String, required: true, unique: true, lowercase: true, trim: true, index: true },
-  password: { type: String, required: true },
-  role: { type: String, enum: ['owner', 'manager'], default: 'manager' },
-  name: { type: String, required: true },
-  mobile: { type: String },
-  isActive: { type: Boolean, default: true },
-  lastLogin: { type: Date },
-  loginAttempts: { type: Number, default: 0 },
-  lockUntil: { type: Date },
-  hostelId: { type: mongoose.Schema.Types.ObjectId, ref: 'Hostel', default: null },
-  recentActivity: { type: [activitySchema], default: [] },
+  username:           { type: String, required: true, unique: true, lowercase: true, trim: true, index: true },
+  password:           { type: String, required: true },
+  role:               { type: String, enum: ['owner', 'manager'], default: 'manager' },
+  name:               { type: String, required: true },
+  mobile:             { type: String },
+  isActive:           { type: Boolean, default: true },
+  mustChangePassword: { type: Boolean, default: false },  // force password change on first login
+  lastLogin:          { type: Date },
+  loginAttempts:      { type: Number, default: 0 },
+  lockUntil:          { type: Date },
+  hostelId:           { type: mongoose.Schema.Types.ObjectId, ref: 'Hostel', default: null },
+  recentActivity:     { type: [activitySchema], default: [] },
 }, { timestamps: true });
 
 userSchema.virtual('isLocked').get(function() {
@@ -30,8 +31,8 @@ userSchema.pre('save', async function(next) {
   next();
 });
 
-userSchema.methods.comparePassword = async function(password) {
-  return bcrypt.compare(password, this.password);
+userSchema.methods.comparePassword = async function(pw) {
+  return bcrypt.compare(pw, this.password);
 };
 
 userSchema.methods.incLoginAttempts = async function() {

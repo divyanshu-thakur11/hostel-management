@@ -14,7 +14,7 @@ router.use(authMiddleware, ownerOnly);
 // Full JSON export (DB backup)
 router.get('/export-json', async (req, res, next) => {
   try {
-    const hostelId = req.query.hostelId;
+    const hostelId = req.hostelId; // from JWT
     const q = hostelId ? { hostelId } : {};
     const [members, archived, receipts, electric, salaries, hostels] = await Promise.all([
       Member.find(q).lean(),
@@ -41,7 +41,7 @@ router.get('/export-json', async (req, res, next) => {
 // Excel CSV export (per collection)
 router.get('/export-csv/:collection', async (req, res, next) => {
   try {
-    const hostelId = req.query.hostelId;
+    const hostelId = req.hostelId; // from JWT
     const q = hostelId ? { hostelId } : {};
     const col = req.params.collection;
 

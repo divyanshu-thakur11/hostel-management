@@ -1,37 +1,19 @@
 import axios from 'axios';
 
-// In production, API is on same server. In dev, proxy to localhost:5000
-const BASE_URL = process.env.NODE_ENV === 'production' ? '/api' : '/api';
+const api = axios.create({
+  baseURL: '/api',
+  withCredentials: true,   // send HttpOnly cookie on every request
+});
 
-const api = axios.create({ baseURL: BASE_URL });
-
-// Attach JWT token + hostelId to every request automatically
-api.interceptors.request.use((config) => {
-  const token    = localStorage.getItem('hm_token');
-  const hostelId = localStorage.getItem('hm_hostel_id');
-  if (token)    config.headers.Authorization = `Bearer ${token}`;
-  // Inject hostelId into every GET as a query param, and every POST/PUT as body field
-  if (hostelId) {
-    if (config.method === 'get') {
-      config.params = { ...config.params, hostelId };
-    } else if (['post','put','patch'].includes(config.method)) {
-      try {
-        const body = typeof config.data === 'string' ? JSON.parse(config.data) : (config.data || {});
-        if (!body.hostelId) body.hostelId = hostelId;
-        config.data = JSON.stringify(body);
-        config.headers['Content-Type'] = 'application/json';
-      } catch(_) {}
-    }
-  }
-  return config;
-}, (error) => Promise.reject(error));
+// No token management needed — cookie is HttpOnly, browser handles it.
+// hostelId comes from JWT on server — no need to send it from client.
 
 // Handle auth errors globally
 api.interceptors.response.use(
   (res) => res,
   (err) => {
     if (err.response?.status === 401) {
-      localStorage.removeItem('hm_token');
+      // Clear any stale localStorage and redirect to login
       localStorage.removeItem('hm_user');
       window.location.href = '/';
     }
@@ -40,15 +22,17 @@ api.interceptors.response.use(
 );
 
 export const authAPI = {
-  login: (data)           => api.post('/auth/login', data),
-  me: ()                  => api.get('/auth/me'),
-  changePassword: (data)  => api.post('/auth/change-password', data),
-  getUsers: ()            => api.get('/auth/users'),
-  createUser: (data)      => api.post('/auth/users', data),
-  createManager: (data)   => api.post('/auth/users', data),  // alias for createUser
-  toggleUser: (id)        => api.put(`/auth/users/${id}/toggle`),
-  deleteUser: (id)        => api.delete(`/auth/users/${id}`),
-  getUserActivity: (id)   => api.get(`/auth/users/${id}/activity`),
+  login:           (data)       => api.post('/auth/login', data),
+  logout:          ()           => api.post('/auth/logout'),
+  me:              ()           => api.get('/auth/me'),
+  changePassword:  (data)       => api.post('/auth/change-password', data),
+  getUsers:        ()           => api.get('/auth/users'),
+  createUser:      (data)       => api.post('/auth/users', data),
+  createManager:   (data)       => api.post('/auth/users', data),
+  toggleUser:      (id)         => api.put(`/auth/users/${id}/toggle`),
+  deleteUser:      (id)         => api.delete(`/auth/users/${id}`),
+  getUserActivity: (id)         => api.get(`/auth/users/${id}/activity`),
+  resetPassword:   (id, data)   => api.post(`/auth/users/${id}/reset-password`, data),
 };
 
 export const dashboardAPI = {
@@ -56,62 +40,62 @@ export const dashboardAPI = {
 };
 
 export const hostelAPI = {
-  getAll: ()           => api.get('/hostels'),
-  create: (data)       => api.post('/hostels', data),
-  update: (id, data)   => api.put(`/hostels/${id}`, data),
+  getAll:  ()           => api.get('/hostels'),
+  create:  (data)       => api.post('/hostels', data),
+  update:  (id, data)   => api.put(`/hostels/${id}`, data),
 };
 
 export const roomsAPI = {
-  getAll:      (params) => api.get('/rooms', { params }),
-  getOne:      (n)      => api.get(`/rooms/${n}`),
-  update:      (n, data)=> api.put(`/rooms/${n}`, data),
-  updateAll:   (rooms)  => api.put('/rooms', { rooms }),
+  getAll:    (params)    => api.get('/rooms', { params }),
+  getOne:    (n)         => api.get(`/rooms/${n}`),
+  update:    (n, data)   => api.put(`/rooms/${n}`, data),
+  updateAll: (rooms)     => api.put('/rooms', { rooms }),
 };
 
 export const membersAPI = {
-  getAll: (params)         => api.get('/members', { params }),
-  getById: (id)            => api.get(`/members/${id}`),
-  getByRoom: (n)           => api.get(`/members/room/${n}`),
-  getNextId: ()            => api.get('/members/next-id'),
-  create: (data)           => api.post('/members', data),
-  update: (id, data)       => api.put(`/members/${id}`, data),
-  vacate: (id, reason)     => api.post(`/members/${id}/vacate`, { reason }),
-  delete: (id)             => api.delete(`/members/${id}`),
-  getArchived: (params)    => api.get('/members/archived', { params }),
-  restoreArchived: (id)    => api.post(`/members/archived/${id}/restore`),
-  deleteArchived: (id)     => api.delete(`/members/archived/${id}`),
+  getAll:          (params) => api.get('/members', { params }),
+  getById:         (id)     => api.get(`/members/${id}`),
+  getByRoom:       (n)      => api.get(`/members/room/${n}`),
+  getNextId:       ()       => api.get('/members/next-id'),
+  create:          (data)   => api.post('/members', data),
+  update:          (id, d)  => api.put(`/members/${id}`, d),
+  vacate:          (id, r)  => api.post(`/members/${id}/vacate`, { reason: r }),
+  delete:          (id)     => api.delete(`/members/${id}`),
+  getArchived:     (params) => api.get('/members/archived', { params }),
+  restoreArchived: (id)     => api.post(`/members/archived/${id}/restore`),
+  deleteArchived:  (id)     => api.delete(`/members/archived/${id}`),
 };
 
 export const receiptsAPI = {
-  getAll: (params)         => api.get('/receipts', { params }),
-  getByRoom: (n)           => api.get(`/receipts/room/${n}`),
+  getAll:         (params) => api.get('/receipts', { params }),
+  getByRoom:      (n)      => api.get(`/receipts/room/${n}`),
   getRoomSummary: (n)      => api.get(`/receipts/room/${n}/summary`),
   getNextNumbers: ()       => api.get('/receipts/next-numbers'),
-  create: (data)           => api.post('/receipts', data),
-  delete: (id)             => api.delete(`/receipts/${id}`),
+  create:         (data)   => api.post('/receipts', data),
+  delete:         (id)     => api.delete(`/receipts/${id}`),
 };
 
 export const electricAPI = {
-  getAll: (params)   => api.get('/electric', { params }),
-  getByRoom: (n)     => api.get(`/electric/room/${n}`),
-  getLastByRoom: (n) => api.get(`/electric/room/${n}/last`),
-  create: (data)     => api.post('/electric', data),
-  update: (id, data) => api.put(`/electric/${id}`, data),
-  delete: (id)       => api.delete(`/electric/${id}`),
+  getAll:      (params) => api.get('/electric', { params }),
+  getByRoom:   (n)      => api.get(`/electric/room/${n}`),
+  getLastByRoom:(n)     => api.get(`/electric/room/${n}/last`),
+  create:      (data)   => api.post('/electric', data),
+  update:      (id, d)  => api.put(`/electric/${id}`, d),
+  delete:      (id)     => api.delete(`/electric/${id}`),
 };
 
 export const salaryAPI = {
-  getAll: (params)   => api.get('/salary', { params }),
-  create: (data)     => api.post('/salary', data),
-  update: (id, data) => api.put(`/salary/${id}`, data),
-  delete: (id)       => api.delete(`/salary/${id}`),
+  getAll:  (params) => api.get('/salary', { params }),
+  create:  (data)   => api.post('/salary', data),
+  update:  (id, d)  => api.put(`/salary/${id}`, d),
+  delete:  (id)     => api.delete(`/salary/${id}`),
 };
 
 export const notificationsAPI = {
-  getAll: (params)  => api.get('/notifications', { params }),
-  markRead: (id)    => api.put(`/notifications/${id}/read`),
-  markAllRead: ()   => api.put('/notifications/read-all'),
-  getUnreadCount: ()=> api.get('/notifications/unread-count'),
+  getAll:       (params) => api.get('/notifications', { params }),
+  markRead:     (id)     => api.put(`/notifications/${id}/read`),
+  markAllRead:  ()       => api.put('/notifications/read-all'),
+  getUnreadCount:()      => api.get('/notifications/unread-count'),
 };
 
 export const auditAPI = {
@@ -119,9 +103,9 @@ export const auditAPI = {
 };
 
 export const backupAPI = {
-  trigger: ()       => api.post('/backup/trigger'),
-  download: ()      => api.get('/backup/download', { responseType: 'blob' }),
-  list: ()          => api.get('/backup/list'),
+  trigger:  ()  => api.post('/backup/trigger'),
+  download: ()  => api.get('/backup/export-json', { responseType: 'blob' }),
+  list:     ()  => api.get('/backup/list'),
 };
 
 export const syncAPI = {
@@ -140,20 +124,15 @@ export const whatsapp = {
     const typeLabel = PKGl[receipt.packageName] || receipt.packageName || '';
     const modeLabel = receipt.modeOfPayment === 'online' ? 'Online / ऑनलाइन' : 'Cash / नगद';
     const membersList = receipt.members?.length > 0 ? receipt.members.map(m=>m.name).join(', ') : (receipt.memberName || '—');
-
     const lines = [
-      `🏠 *HOSTEL RECEIPT*`,
-      `━━━━━━━━━━━━━━━━━━`,
+      `🏠 *HOSTEL RECEIPT*`, `━━━━━━━━━━━━━━━━━━`,
       `📋 Bill No: *${receipt.billNumber || receipt.receiptNumber || '—'}*`,
-      `📅 Date: ${date}`,
-      ``,
+      `📅 Date: ${date}`, ``,
       `👤 Name: *${membersList}*`,
       `🚪 Room No: *${receipt.roomNumber || '—'}*`,
       `💳 Type: ${typeLabel}`,
-      `💵 Mode: ${modeLabel}`,
-      ``,
+      `💵 Mode: ${modeLabel}`, ``,
     ];
-
     if (receipt.isPartPayment && (receipt.balanceDue || 0) > 0) {
       lines.push(`📊 Total Bill: ₹${(receipt.totalAmount||0).toLocaleString('en-IN')}`);
       lines.push(`✅ Paid Today: *₹${paidAmt.toLocaleString('en-IN')}*`);
@@ -163,48 +142,43 @@ export const whatsapp = {
       lines.push(`💰 *Amount: ₹${paidAmt.toLocaleString('en-IN')}*`);
       if (receipt.amountInWords) lines.push(`   (${receipt.amountInWords})`);
     }
-
     if (receipt.notes) { lines.push(``); lines.push(`📝 Notes: ${receipt.notes}`); }
-    lines.push(``);
-    lines.push(`✅ Payment received. Thank you! 🙏`);
-
+    lines.push(``); lines.push(`✅ Payment received. Thank you! 🙏`);
     window.open(`https://wa.me/${num}?text=${encodeURIComponent(lines.join('\n'))}`, '_blank');
   },
   sendFinalBill: (mobile, memberName, roomNo, grandTotal, breakdown) => {
-    const num = `91${String(mobile).replace(/\D/g,'').replace(/^91/,'')}`;
+    const num = `91${String(mobile).replace(/\D/g,'').replace(/^91/,'').slice(-10)}`;
     const lines = [
-      `🏠 *FINAL BILLING STATEMENT*`,`━━━━━━━━━━━━━━━━━━`,
-      `👤 ${memberName}`,`🚪 Room No: ${roomNo}`,``,
+      `🏠 *FINAL BILLING STATEMENT*`, `━━━━━━━━━━━━━━━━━━`,
+      `👤 ${memberName}`, `🚪 Room No: ${roomNo}`, ``,
       `📊 *Breakdown:*`,
-      breakdown.rent      ? `  Rent:     ₹${breakdown.rent}`      : '',
-      breakdown.advance   ? `  Advance:  ₹${breakdown.advance}`   : '',
-      breakdown.electric  ? `  Electric: ₹${breakdown.electric}`  : '',
-      breakdown.other     ? `  Other:    ₹${breakdown.other}`     : '',
-      ``,`💰 *Grand Total: ₹${grandTotal}*`,``,
-      `Please settle all dues before vacating.`,`Thank you 🙏`,
+      breakdown.rent     ? `  Rent:     ₹${breakdown.rent}`     : '',
+      breakdown.advance  ? `  Advance:  ₹${breakdown.advance}`  : '',
+      breakdown.electric ? `  Electric: ₹${breakdown.electric}` : '',
+      breakdown.other    ? `  Other:    ₹${breakdown.other}`    : '',
+      ``, `💰 *Grand Total: ₹${grandTotal}*`, ``,
+      `Please settle all dues before vacating.`, `Thank you 🙏`,
     ].filter(Boolean).join('\n');
     window.open(`https://wa.me/${num}?text=${encodeURIComponent(lines)}`, '_blank');
   },
   sendReminder: (mobile, name, roomNo, amount, type = 'rent') => {
-    const num = `91${String(mobile).replace(/\D/g,'').replace(/^91/,'')}`;
+    const num = `91${String(mobile).replace(/\D/g,'').replace(/^91/,'').slice(-10)}`;
     const today = new Date().toLocaleDateString('en-IN', { day:'2-digit', month:'long', year:'numeric' });
     const msg = [
-      `🏠 *HOSTEL PAYMENT REMINDER*`,
-      `━━━━━━━━━━━━━━━━━━`,
-      `📅 Date: ${today}`,``,
-      `Dear *${name}*,`,``,
-      `This is a friendly reminder that your *${type.toUpperCase()}* payment is pending.`,``,
+      `🏠 *HOSTEL PAYMENT REMINDER*`, `━━━━━━━━━━━━━━━━━━`,
+      `📅 Date: ${today}`, ``,
+      `Dear *${name}*,`, ``,
+      `This is a friendly reminder that your *${type.toUpperCase()}* payment is pending.`, ``,
       amount ? `💰 Amount Due: *₹${Number(amount).toLocaleString('en-IN')}*` : '',
-      `🚪 Room No: *${roomNo}*`,``,
-      `Please clear your dues at the earliest to avoid any inconvenience.`,``,
-      `⚠️ Late payment attracts a fine of ₹50/- per day.`,``,
-      `Thank you 🙏`,
-      `— Hostel Management`,
+      `🚪 Room No: *${roomNo}*`, ``,
+      `Please clear your dues at the earliest.`, ``,
+      `⚠️ Late payment attracts a fine of ₹50/- per day.`, ``,
+      `Thank you 🙏`, `— Hostel Management`,
     ].filter(Boolean).join('\n');
     window.open(`https://wa.me/${num}?text=${encodeURIComponent(msg)}`, '_blank');
   },
   sendCustom: (mobile, message) => {
-    const num = `91${String(mobile).replace(/\D/g,'').replace(/^91/,'')}`;
+    const num = `91${String(mobile).replace(/\D/g,'').replace(/^91/,'').slice(-10)}`;
     window.open(`https://wa.me/${num}?text=${encodeURIComponent(message)}`, '_blank');
   },
-};  
+};

@@ -12,7 +12,7 @@ router.use(authMiddleware);
 
 const getHostelId = async (req) => {
   if (req.user.role === 'owner') {
-    const hId = req.query.hostelId;
+    const hId = req.hostelId; // from JWT — never from client
     if (hId) return hId;
     const first = await Hostel.findOne({ isActive: true }).sort({ createdAt: 1 });
     return first?._id;

@@ -17,12 +17,12 @@ export default function Login({ onLogin }) {
     setLoading(true);
     try {
       const res = await authAPI.login(form);
-      const { token, user } = res.data;
+      const { user, requirePasswordChange } = res.data;
       if (role === 'owner' && user.role !== 'owner') { setError('This account does not have owner access.'); setLoading(false); return; }
       if (role === 'manager' && user.role !== 'manager') { setError('This is an owner account. Please use Owner login.'); setLoading(false); return; }
-      localStorage.setItem('hm_token', token);
+      // Token is now in HttpOnly cookie — no localStorage needed
       localStorage.setItem('hm_user', JSON.stringify(user));
-      onLogin(user);
+      onLogin(user, requirePasswordChange);
     } catch (err) {
       setError(err.response?.data?.message || 'Login failed. Check your credentials.');
     } finally { setLoading(false); }
@@ -120,7 +120,7 @@ export default function Login({ onLogin }) {
 
           <div style={{ marginTop: 14, padding: '10px 12px', background: 'var(--bg3)', borderRadius: 6, fontSize: '0.75rem', color: 'var(--text3)', textAlign: 'center' }}>
             {isOwner
-              ? <>Default: <strong style={{ color: 'var(--text2)' }}>owner</strong> / <strong style={{ color: 'var(--text2)' }}>owner123</strong> — Change after first login</>
+              ? <>Contact your system administrator for login credentials</>
               : <>Contact your owner for login credentials</>}
           </div>
         </div>

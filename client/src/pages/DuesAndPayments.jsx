@@ -1,3 +1,4 @@
+import { useHostel } from '../context/HostelContext';
 import React, { useEffect, useState, useCallback } from 'react';
 import { membersAPI, receiptsAPI, electricAPI, roomsAPI, whatsapp as wa } from '../utils/api';
 import { useToast } from '../context/ToastContext';
@@ -7,6 +8,7 @@ const fmtM  = (n) => `₹${(n||0).toLocaleString('en-IN')}`;
 const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 
 export default function DuesAndPayments() {
+  const { hostelSwitchCount } = useHostel();
   const [tab, setTab]         = useState('dues');
   const [members, setMembers] = useState([]);
   const [receipts, setReceipts] = useState([]);
@@ -30,7 +32,7 @@ export default function DuesAndPayments() {
       setRooms(Array.isArray(roR.data) ? roR.data : (roR.data?.data || []));
     }).catch(() => toast('Failed to load', 'error'))
       .finally(() => setLoading(false));
-  }, []);
+  }, [hostelSwitchCount]);
 
   useEffect(() => { load(); }, [load]);
 

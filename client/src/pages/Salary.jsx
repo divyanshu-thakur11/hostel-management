@@ -1,3 +1,4 @@
+import { useHostel } from '../context/HostelContext';
 import React, { useEffect, useState } from 'react';
 import { salaryAPI } from '../utils/api';
 import { useToast } from '../context/ToastContext';

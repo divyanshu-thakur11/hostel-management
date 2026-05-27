@@ -1,3 +1,4 @@
+import { useHostel } from '../context/HostelContext';
 import React, { useEffect, useState, useCallback } from 'react';
 import { roomsAPI } from '../utils/api';
 import { useToast } from '../context/ToastContext';
@@ -9,6 +10,7 @@ const STATUS_STYLE = {
 };
 
 export default function Rooms() {
+  const { hostelSwitchCount } = useHostel();
   const [rooms, setRooms]         = useState([]);
   const [loading, setLoading]     = useState(true);
   const [editRoom, setEditRoom]   = useState(null);   // room being edited in modal
@@ -28,7 +30,7 @@ export default function Rooms() {
       })
       .catch(() => toast('Failed to load rooms', 'error'))
       .finally(() => setLoading(false));
-  }, []);
+  }, [hostelSwitchCount]);
 
   useEffect(() => { load(); }, [load]);
 

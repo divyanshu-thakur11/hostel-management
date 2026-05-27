@@ -1,3 +1,4 @@
+import { useHostel } from '../context/HostelContext';
 import React, { useEffect, useState } from 'react';
 import { electricAPI } from '../utils/api';
 import { useToast } from '../context/ToastContext';
@@ -5,6 +6,7 @@ import { useToast } from '../context/ToastContext';
 const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 
 export default function Electric() {
+  const { hostelSwitchCount } = useHostel();
   const [readings, setReadings] = useState([]);
   const [selectedRoom, setSelectedRoom] = useState(1);
   const [showModal, setShowModal] = useState(false);

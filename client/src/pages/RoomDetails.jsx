@@ -1,8 +1,10 @@
+import { useHostel } from '../context/HostelContext';
 import React, { useEffect, useState } from 'react';
 import { membersAPI, roomsAPI, whatsapp as wa } from '../utils/api';
 import { useToast } from '../context/ToastContext';
 
 export default function RoomDetails() {
+  const { hostelSwitchCount } = useHostel();
   const [members, setMembers] = useState([]);
   const [showModal, setShowModal] = useState(false);
   const [showVacateModal, setShowVacateModal] = useState(null);
@@ -13,7 +15,7 @@ export default function RoomDetails() {
   const toast = useToast();
 
   const load = () => membersAPI.getAll().then(r => setMembers(r.data?.data || r.data || []));
-  useEffect(() => { load(); }, []);
+  useEffect(() => { load(); }, [hostelSwitchCount]);
 
   const today = new Date();
   const activeMembers = members.filter(m => m.isActive !== false);

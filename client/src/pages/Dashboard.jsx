@@ -1,3 +1,4 @@
+import { useHostel } from '../context/HostelContext';
 import React, { useEffect, useState, useCallback } from 'react';
 import { dashboardAPI, membersAPI } from '../utils/api';
 import { whatsapp as wa } from '../utils/api';
@@ -18,6 +19,7 @@ function StatCard({ icon, label, value, color = 'var(--accent)', sub, onClick })
 }
 
 export default function Dashboard() {
+  const { hostelSwitchCount } = useHostel();
   const [stats, setStats] = useState(null);
   const [loading, setLoading] = useState(true);
   const [showOverdue, setShowOverdue] = useState(false);
@@ -28,7 +30,7 @@ export default function Dashboard() {
   const load = useCallback(() => {
     setLoading(true);
     dashboardAPI.get().then(r => { setStats(r.data); setLoading(false); }).catch(() => setLoading(false));
-  }, []);
+  }, [hostelSwitchCount]);
 
   useEffect(() => { load(); }, [load]);
 

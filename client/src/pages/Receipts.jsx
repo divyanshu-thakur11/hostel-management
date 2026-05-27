@@ -1,3 +1,4 @@
+import { useHostel } from '../context/HostelContext';
 import React, { useEffect, useState, useRef, useCallback } from 'react';
 import { membersAPI, receiptsAPI, roomsAPI, electricAPI, whatsapp } from '../utils/api';
 import { useToast } from '../context/ToastContext';

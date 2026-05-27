@@ -1,7 +1,9 @@
+import { useHostel } from '../context/HostelContext';
 import React, { useEffect, useState } from 'react';
 import { membersAPI, receiptsAPI, electricAPI, salaryAPI, backupAPI } from '../utils/api';
 
 export default function Reports() {
+  const { hostelSwitchCount } = useHostel();
   const [members, setMembers] = useState([]);
   const [receipts, setReceipts] = useState([]);
   const [salary, setSalary] = useState([]);
@@ -22,7 +24,7 @@ export default function Reports() {
       setSalary(s.data?.data || s.data || []);
       setLoading(false);
     }).catch(() => setLoading(false));
-  }, []);
+  }, [hostelSwitchCount]);
 
   const activeMembers = members.filter(m => m.isActive !== false && m.roomNumber);
 

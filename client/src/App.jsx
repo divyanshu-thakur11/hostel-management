@@ -19,6 +19,7 @@ import Notifications from './pages/Notifications';
 import AuditLog from './pages/AuditLog';
 import DuesAndPayments from './pages/DuesAndPayments';
 import { authAPI, hostelAPI, notificationsAPI } from './utils/api';
+import { HostelProvider, useHostel } from './context/HostelContext';
 
 const OWNER_NAV = [
   { path: '/',             label: 'Dashboard',       icon: '📊' },
@@ -205,7 +206,7 @@ function Sidebar({ user, activeHostel, unreadCount, sidebarOpen, onClose, onLogo
 
 function AppShell() {
   const [user, setUser] = useState(() => { try { return JSON.parse(localStorage.getItem('hm_user')); } catch { return null; } });
-  const [activeHostel, setActiveHostel] = useState(null);
+  const { activeHostel, loadHostel, switchHostel } = useHostel();
   const [unreadCount, setUnreadCount] = useState(0);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const toast = useToast();
@@ -219,16 +220,6 @@ function AppShell() {
   }, [toast]);
 
   useAutoLogout(doLogout);
-
-  const loadHostel = useCallback(async () => {
-    try {
-      const r = await hostelAPI.getAll();
-      const hostelId = localStorage.getItem('hm_hostel_id');
-      const h = hostelId ? (r.data||[]).find(x => x._id===hostelId) : r.data?.[0];
-      if (h) { setActiveHostel(h); localStorage.setItem('hm_hostel_id', h._id); }
-      else if (r.data?.length > 0) { setActiveHostel(r.data[0]); localStorage.setItem('hm_hostel_id', r.data[0]._id); }
-    } catch(_) {}
-  }, []);
 
   const pollNotifications = useCallback(async () => {
     try {
@@ -247,7 +238,7 @@ function AppShell() {
 
   const handleLogin       = (u) => setUser(u);
   const handleSwitchRole  = (newUser) => { setUser(newUser); loadHostel(); };
-  const handleHostelSwitch = (h) => setActiveHostel(h);
+  const handleHostelSwitch = (h) => switchHostel(h);
 
   if (!user) return <Login onLogin={handleLogin} />;
 
@@ -294,6 +285,7 @@ function AppShell() {
 
 export default function App() {
   return (
-    <BrowserRouter><ToastProvider><AppShell /></ToastProvider></BrowserRouter>
+    <BrowserRouter><ToastProvider><HostelProvider><AppShell /></HostelProvider></ToastProvider></BrowserRouter>
   );
 }
+  

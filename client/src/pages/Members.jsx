@@ -1,3 +1,4 @@
+import { useHostel } from '../context/HostelContext';
 import React, { useEffect, useState, useRef, useCallback } from 'react';
 import { membersAPI, roomsAPI, whatsapp as wa } from '../utils/api';
 import { useToast } from '../context/ToastContext';
@@ -48,6 +49,7 @@ function AadharInput({ value, onChange }) {
 const PAGE_SIZE = 20;
 
 export default function Members() {
+  const { hostelSwitchCount } = useHostel();
   const [members, setMembers]   = useState([]);
   const [archived, setArchived] = useState([]);
   const [total, setTotal]       = useState(0);
@@ -90,7 +92,7 @@ export default function Members() {
     });
   }, [search]);
 
-  useEffect(() => { loadActive(1); }, []);
+  useEffect(() => { loadActive(1); }, [hostelSwitchCount]);
   useEffect(() => { loadArchived(1); }, []);
 
   const handleSearch = (val) => {

@@ -1,3 +1,4 @@
+import { useHostel } from '../context/HostelContext';
 import React, { useEffect, useState, useRef } from 'react';
 import { membersAPI, receiptsAPI, electricAPI, roomsAPI, whatsapp as wa } from '../utils/api';
 
@@ -14,6 +15,7 @@ function numberToWords(num) {
 }
 
 export default function FinalBilling() {
+  const { hostelSwitchCount } = useHostel();
   const [members,  setMembers]  = useState([]);
   const [receipts, setReceipts] = useState([]);
   const [electric, setElectric] = useState([]);
@@ -28,7 +30,7 @@ export default function FinalBilling() {
     membersAPI.getAll({ limit:500 }).then(r => setMembers(r.data?.data || r.data || []));
     receiptsAPI.getAll({ limit:1000 }).then(r => setReceipts(r.data?.data || r.data || []));
     electricAPI.getAll().then(r => setElectric(r.data?.data || r.data || []));
-  }, []);
+  }, [hostelSwitchCount]);
 
   useEffect(() => {
     if (!selectedRoom) { setRoomMembers([]); setRoomReceipts([]); setRoomElectric([]); setRoomConfig(null); return; }

@@ -5,10 +5,24 @@ const BASE_URL = process.env.NODE_ENV === 'production' ? '/api' : '/api';
 
 const api = axios.create({ baseURL: BASE_URL });
 
-// Attach JWT token to every request
+// Attach JWT token + hostelId to every request automatically
 api.interceptors.request.use((config) => {
-  const token = localStorage.getItem('hm_token');
-  if (token) config.headers.Authorization = `Bearer ${token}`;
+  const token    = localStorage.getItem('hm_token');
+  const hostelId = localStorage.getItem('hm_hostel_id');
+  if (token)    config.headers.Authorization = `Bearer ${token}`;
+  // Inject hostelId into every GET as a query param, and every POST/PUT as body field
+  if (hostelId) {
+    if (config.method === 'get') {
+      config.params = { ...config.params, hostelId };
+    } else if (['post','put','patch'].includes(config.method)) {
+      try {
+        const body = typeof config.data === 'string' ? JSON.parse(config.data) : (config.data || {});
+        if (!body.hostelId) body.hostelId = hostelId;
+        config.data = JSON.stringify(body);
+        config.headers['Content-Type'] = 'application/json';
+      } catch(_) {}
+    }
+  }
   return config;
 }, (error) => Promise.reject(error));
 
@@ -193,4 +207,4 @@ export const whatsapp = {
     const num = `91${String(mobile).replace(/\D/g,'').replace(/^91/,'')}`;
     window.open(`https://wa.me/${num}?text=${encodeURIComponent(message)}`, '_blank');
   },
-};
+};  

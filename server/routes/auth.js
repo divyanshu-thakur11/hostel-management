@@ -9,8 +9,9 @@ const logger   = require('../utils/logger');
 const COOKIE_OPTS = {
   httpOnly: true,
   secure:   process.env.NODE_ENV === 'production',
-  sameSite: 'strict',
-  maxAge:   12 * 60 * 60 * 1000,  // 12 hours, matches JWT expiry
+  sameSite: process.env.NODE_ENV === 'production' ? 'lax' : 'lax',
+  maxAge:   12 * 60 * 60 * 1000,  // 12 hours
+  path:     '/',
 };
 
 // ── Login ──────────────────────────────────────────────────────────────────────

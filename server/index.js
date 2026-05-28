@@ -16,14 +16,24 @@ const app = express();
 // CRITICAL for Render — trust proxy or rate limiter crashes
 app.set('trust proxy', 1);
 
-// ── CORS — whitelist only allowed origins ─────────────────────────────────────
-const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || 'http://localhost:3000')
-  .split(',').map(o => o.trim()).filter(Boolean);
+// ── CORS — whitelist allowed origins ──────────────────────────────────────────
+// In production on Render, React and API are served from the same origin,
+// so browser requests have no Origin header (same-origin) — always allowed.
+// We also explicitly allow the Render URL and localhost for dev.
+const RENDER_URL = process.env.RENDER_EXTERNAL_URL || '';
+const ALLOWED_ORIGINS = [
+  'http://localhost:3000',
+  'http://localhost:5000',
+  ...(RENDER_URL ? [RENDER_URL] : []),
+  ...(process.env.ALLOWED_ORIGINS || '').split(',').map(o => o.trim()).filter(Boolean),
+];
 
 app.use(cors({
   origin: (origin, cb) => {
-    // allow same-origin requests (no origin header) and whitelisted origins
-    if (!origin || ALLOWED_ORIGINS.includes(origin)) return cb(null, true);
+    // No origin = same-origin request from browser (always allow)
+    if (!origin) return cb(null, true);
+    if (ALLOWED_ORIGINS.includes(origin)) return cb(null, true);
+    // In production also allow requests from same host dynamically
     cb(new Error(`CORS: origin ${origin} not allowed`));
   },
   credentials: true,

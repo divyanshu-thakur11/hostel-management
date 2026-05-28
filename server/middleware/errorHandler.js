@@ -15,18 +15,13 @@ const errorHandler = (err, req, res, next) => {
     const field = Object.keys(err.keyValue || {})[0] || 'field';
     return res.status(409).json({ message: `${field} already exists. Please use a different value.` });
   }
-  if (err.name === 'CastError') {
-    return res.status(400).json({ message: 'Invalid ID format' });
-  }
-  if (err.name === 'JsonWebTokenError') {
-    return res.status(401).json({ message: 'Invalid token. Please log in again.' });
-  }
-  if (err.name === 'TokenExpiredError') {
-    return res.status(401).json({ message: 'Session expired. Please log in again.' });
-  }
+  if (err.name === 'CastError')         return res.status(400).json({ message: 'Invalid ID format' });
+  if (err.name === 'JsonWebTokenError') return res.status(401).json({ message: 'Invalid token. Please log in again.' });
+  if (err.name === 'TokenExpiredError') return res.status(401).json({ message: 'Session expired. Please log in again.' });
 
   const status = err.status || err.statusCode || 500;
-  res.status(status).json({ message: process.env.NODE_ENV === 'production' ? 'Server error. Please try again.' : err.message });
+  // Always return the real message — makes debugging possible
+  res.status(status).json({ message: err.message || 'Internal server error' });
 };
 
 module.exports = { notFound, errorHandler };

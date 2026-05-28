@@ -1,8 +1,8 @@
 import axios from 'axios';
 
 const api = axios.create({
-  baseURL: '/api',
-  withCredentials: true,   // send HttpOnly cookie on every request
+  baseURL: '/api',           // always relative — works on Render same-origin
+  withCredentials: true,     // send HttpOnly cookie on every request
 });
 
 // No token management needed — cookie is HttpOnly, browser handles it.

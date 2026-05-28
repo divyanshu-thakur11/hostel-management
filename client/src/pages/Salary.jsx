@@ -1,5 +1,5 @@
 import { useHostel } from '../context/HostelContext';
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import { salaryAPI } from '../utils/api';
 import { useToast } from '../context/ToastContext';
 
@@ -13,9 +13,10 @@ export default function Salary() {
   const [form, setForm] = useState(EMPTY);
   const [maintenance, setMaintenance] = useState([]);
   const toast = useToast();
+  const { hostelSwitchCount } = useHostel();
 
-  const load = () => salaryAPI.getAll().then(r => setRecords(r.data));
-  useEffect(() => { load(); }, []);
+  const load = useCallback(() => salaryAPI.getAll().then(r => setRecords(r.data)), [hostelSwitchCount]);
+  useEffect(() => { load(); }, [load]);
 
   const open = (r=null) => {
     setEditing(r);

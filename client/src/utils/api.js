@@ -6,7 +6,13 @@ const api = axios.create({
 });
 
 // No token management needed — cookie is HttpOnly, browser handles it.
-// hostelId comes from JWT on server — no need to send it from client.
+// For hostel switching: owner sends selected hostelId as x-hostel-id header.
+// Server ignores this for managers (locked to their JWT hostelId).
+api.interceptors.request.use((config) => {
+  const hostelId = localStorage.getItem('hm_hostel_id');
+  if (hostelId) config.headers['x-hostel-id'] = hostelId;
+  return config;
+});
 
 // Handle auth errors globally
 api.interceptors.response.use(

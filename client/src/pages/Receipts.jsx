@@ -53,6 +53,7 @@ export default function Receipts() {
   const toast = useToast();
 
   // Load receipts with filters
+  const { hostelSwitchCount } = useHostel();
   const loadReceipts = useCallback((p = 1) => {
     setLoading(true);
     const params = { page: p, limit: 30 };
@@ -77,7 +78,7 @@ export default function Receipts() {
   useEffect(() => { loadReceipts(1); }, [loadReceipts]);
   useEffect(() => {
     membersAPI.getAll({ limit: 500 }).then(r => setMembers(r.data?.data || r.data || []));
-  }, []);
+  }, [hostelSwitchCount]);
 
   const uniqueRooms = [...new Set(
     members.filter(m => m.roomNumber && m.isActive !== false).map(m => m.roomNumber)

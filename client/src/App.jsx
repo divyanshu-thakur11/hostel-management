@@ -226,6 +226,8 @@ function ThemeToggle() {
     </button>
   );
 }
+
+function AppShell() {
   const [user, setUser] = useState(() => { try { return JSON.parse(localStorage.getItem('hm_user')); } catch { return null; } });
   const [mustChangePw, setMustChangePw] = useState(false);
   const { activeHostel, loadHostel, switchHostel } = useHostel();

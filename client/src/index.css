@@ -1,7 +1,7 @@
 /* ── Google Fonts ── */
 @import url('https://fonts.googleapis.com/css2?family=Rajdhani:wght@500;600;700&family=Inter:wght@300;400;500;600&display=swap');
 
-/* ── CSS Variables ── */
+/* ── CSS Variables — Dark Mode (default) ── */
 :root {
   --bg:        #0b0c0f;
   --bg2:       #13141a;
@@ -22,6 +22,27 @@
   --radius:    10px;
   --shadow:    0 4px 24px rgba(0,0,0,0.35);
   --shadow-sm: 0 2px 8px rgba(0,0,0,0.22);
+}
+
+/* ── Light Mode ── */
+[data-theme="light"] {
+  --bg:        #f4f5f7;
+  --bg2:       #ffffff;
+  --bg3:       #f0f1f4;
+  --bg4:       #e8e9ee;
+  --border:    #dde0e8;
+  --border2:   #c8cad6;
+  --text:      #1a1b2e;
+  --text2:     #4a4b6a;
+  --text3:     #9496b0;
+  --accent:    #d4920a;
+  --accent2:   #e8a80e;
+  --success:   #1ea85c;
+  --danger:    #c0392b;
+  --info:      #2371b5;
+  --purple:    #7d3fa0;
+  --shadow:    0 4px 24px rgba(0,0,0,0.10);
+  --shadow-sm: 0 2px 8px rgba(0,0,0,0.07);
 }
 
 /* ── Reset ── */
@@ -258,14 +279,26 @@ thead th {
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.08em;
-  border-bottom: 1px solid var(--border2);
+  border-bottom: 2px solid var(--border2);
   white-space: nowrap;
+  position: sticky;
+  top: 0;
+  z-index: 1;
 }
-thead th:first-child { border-radius: 0; }
-tbody tr { border-bottom: 1px solid var(--border); transition: background 0.12s; }
+tbody tr {
+  border-bottom: 1px solid var(--border);
+  transition: background 0.1s;
+}
 tbody tr:last-child { border-bottom: none; }
+tbody tr:nth-child(even) { background: rgba(255,255,255,0.015); }
 tbody tr:hover { background: var(--bg3); }
-tbody td { padding: 11px 14px; color: var(--text2); vertical-align: middle; }
+tbody td {
+  padding: 10px 14px;
+  color: var(--text2);
+  vertical-align: middle;
+}
+[data-theme="light"] tbody tr:nth-child(even) { background: rgba(0,0,0,0.02); }
+[data-theme="light"] tbody tr:hover { background: var(--bg3); }
 
 /* ── Forms ── */
 .form-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 14px; }

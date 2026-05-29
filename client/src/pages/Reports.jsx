@@ -1,6 +1,7 @@
 import { useHostel } from '../context/HostelContext';
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useMemo } from 'react';
 import { membersAPI, receiptsAPI, electricAPI, salaryAPI, backupAPI } from '../utils/api';
+import { BarChart, Bar, LineChart, Line, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 
 export default function Reports() {
   const { hostelSwitchCount } = useHostel();
@@ -49,6 +50,52 @@ export default function Reports() {
   );
 
   const fmt = (n) => Number(n || 0).toLocaleString('en-IN');
+
+  // ── Chart data ─────────────────────────────────────────────────────────────
+  const monthlyChartData = useMemo(() => {
+    const byMonth = {};
+    receipts.forEach(r => {
+      const d = new Date(r.receiptDate);
+      const key = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
+      const label = d.toLocaleString('en-IN', { month: 'short', year: '2-digit' });
+      if (!byMonth[key]) byMonth[key] = { label, income: 0, rent: 0, electric: 0, advance: 0 };
+      byMonth[key].income   += r.amountPaid || r.totalAmount || 0;
+      byMonth[key].rent     += r.rent     || 0;
+      byMonth[key].electric += r.electric || 0;
+      byMonth[key].advance  += r.advance  || 0;
+    });
+    return Object.entries(byMonth).sort((a,b)=>a[0].localeCompare(b[0])).slice(-6).map(([,v])=>v);
+  }, [receipts]);
+
+  const paymentModePie = useMemo(() => [
+    { name: 'Cash',   value: receipts.filter(r=>r.modeOfPayment==='cash').reduce((s,r)=>s+(r.amountPaid||r.totalAmount||0),0) },
+    { name: 'Online', value: receipts.filter(r=>r.modeOfPayment==='online').reduce((s,r)=>s+(r.amountPaid||r.totalAmount||0),0) },
+  ].filter(x=>x.value>0), [receipts]);
+
+  const paymentTypePie = useMemo(() => {
+    const types = {};
+    receipts.forEach(r => {
+      const t = r.packageName || 'other';
+      types[t] = (types[t] || 0) + (r.amountPaid || r.totalAmount || 0);
+    });
+    return Object.entries(types).map(([name, value]) => ({ name, value })).filter(x=>x.value>0);
+  }, [receipts]);
+
+  const PIE_COLORS = ['#f0a500','#2ecc71','#3498db','#9b59b6','#e74c3c','#1abc9c'];
+
+  const ChartTooltip = ({ active, payload, label }) => {
+    if (!active || !payload?.length) return null;
+    return (
+      <div style={{background:'var(--bg2)',border:'1px solid var(--border2)',borderRadius:8,padding:'10px 14px',fontSize:'0.82rem',boxShadow:'0 4px 16px rgba(0,0,0,0.3)'}}>
+        {label && <div style={{color:'var(--text3)',marginBottom:6,fontWeight:600}}>{label}</div>}
+        {payload.map((p,i) => (
+          <div key={i} style={{color:p.color,display:'flex',gap:8,justifyContent:'space-between'}}>
+            <span>{p.name}</span><span style={{fontWeight:700}}>₹{Number(p.value).toLocaleString('en-IN')}</span>
+          </div>
+        ))}
+      </div>
+    );
+  };
 
   const downloadBlob = (data, filename, type) => {
     const url = window.URL.createObjectURL(new Blob([data], { type }));
@@ -131,7 +178,86 @@ export default function Reports() {
             <StatCard label="Maintenance" value={`₹${fmt(totalMaintenance)}`} color="var(--danger)" />
           </div>
 
-          {/* Month-wise breakdown */}
+          {/* Charts */}
+          {monthlyChartData.length > 0 && (
+            <div style={{display:'grid',gridTemplateColumns:'2fr 1fr',gap:14,marginBottom:14}}>
+              {/* Monthly Revenue Bar Chart */}
+              <div className="card">
+                <h3 style={{fontFamily:'Rajdhani',fontSize:'0.9rem',color:'var(--text2)',textTransform:'uppercase',letterSpacing:'0.06em',marginBottom:14}}>Monthly Revenue (Last 6 Months)</h3>
+                <ResponsiveContainer width="100%" height={200}>
+                  <BarChart data={monthlyChartData} margin={{top:4,right:4,left:0,bottom:0}}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
+                    <XAxis dataKey="label" tick={{fill:'var(--text3)',fontSize:11}} axisLine={false} tickLine={false} />
+                    <YAxis tick={{fill:'var(--text3)',fontSize:11}} axisLine={false} tickLine={false} tickFormatter={v=>`₹${v>=1000?Math.round(v/1000)+'k':v}`} />
+                    <Tooltip content={<ChartTooltip />} />
+                    <Legend wrapperStyle={{fontSize:'0.75rem',color:'var(--text3)'}} />
+                    <Bar dataKey="rent"     name="Rent"     fill="#f0a500" radius={[3,3,0,0]} />
+                    <Bar dataKey="electric" name="Electric" fill="#3498db" radius={[3,3,0,0]} />
+                    <Bar dataKey="advance"  name="Advance"  fill="#2ecc71" radius={[3,3,0,0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+
+              {/* Payment Mode Pie */}
+              <div className="card">
+                <h3 style={{fontFamily:'Rajdhani',fontSize:'0.9rem',color:'var(--text2)',textTransform:'uppercase',letterSpacing:'0.06em',marginBottom:14}}>Payment Mode</h3>
+                <ResponsiveContainer width="100%" height={200}>
+                  <PieChart>
+                    <Pie data={paymentModePie} cx="50%" cy="50%" innerRadius={50} outerRadius={80} paddingAngle={4} dataKey="value">
+                      {paymentModePie.map((_, i) => <Cell key={i} fill={PIE_COLORS[i % PIE_COLORS.length]} />)}
+                    </Pie>
+                    <Tooltip formatter={(v)=>`₹${Number(v).toLocaleString('en-IN')}`} contentStyle={{background:'var(--bg2)',border:'1px solid var(--border2)',borderRadius:8,fontSize:'0.8rem'}} />
+                    <Legend wrapperStyle={{fontSize:'0.75rem',color:'var(--text3)'}} />
+                  </PieChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+          )}
+
+          {/* Income vs Expenditure Line (if salary data) */}
+          {monthlyChartData.length > 1 && (
+            <div className="card" style={{marginBottom:14}}>
+              <h3 style={{fontFamily:'Rajdhani',fontSize:'0.9rem',color:'var(--text2)',textTransform:'uppercase',letterSpacing:'0.06em',marginBottom:14}}>Total Income Trend</h3>
+              <ResponsiveContainer width="100%" height={160}>
+                <LineChart data={monthlyChartData} margin={{top:4,right:4,left:0,bottom:0}}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
+                  <XAxis dataKey="label" tick={{fill:'var(--text3)',fontSize:11}} axisLine={false} tickLine={false} />
+                  <YAxis tick={{fill:'var(--text3)',fontSize:11}} axisLine={false} tickLine={false} tickFormatter={v=>`₹${v>=1000?Math.round(v/1000)+'k':v}`} />
+                  <Tooltip content={<ChartTooltip />} />
+                  <Line type="monotone" dataKey="income" name="Total Income" stroke="#f0a500" strokeWidth={2.5} dot={{fill:'#f0a500',r:4}} activeDot={{r:6}} />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+          )}
+
+          {/* Payment Type Breakdown */}
+          {paymentTypePie.length > 0 && (
+            <div className="card" style={{marginBottom:14}}>
+              <h3 style={{fontFamily:'Rajdhani',fontSize:'0.9rem',color:'var(--text2)',textTransform:'uppercase',letterSpacing:'0.06em',marginBottom:14}}>Income by Payment Type</h3>
+              <div style={{display:'flex',gap:10,flexWrap:'wrap',alignItems:'center'}}>
+                <ResponsiveContainer width={180} height={140}>
+                  <PieChart>
+                    <Pie data={paymentTypePie} cx="50%" cy="50%" outerRadius={65} dataKey="value" paddingAngle={3}>
+                      {paymentTypePie.map((_,i)=><Cell key={i} fill={PIE_COLORS[i%PIE_COLORS.length]} />)}
+                    </Pie>
+                    <Tooltip formatter={v=>`₹${Number(v).toLocaleString('en-IN')}`} contentStyle={{background:'var(--bg2)',border:'1px solid var(--border2)',borderRadius:8,fontSize:'0.8rem'}} />
+                  </PieChart>
+                </ResponsiveContainer>
+                <div style={{display:'flex',flexDirection:'column',gap:7,flex:1}}>
+                  {paymentTypePie.map((p,i)=>(
+                    <div key={i} style={{display:'flex',alignItems:'center',gap:10}}>
+                      <div style={{width:10,height:10,borderRadius:2,background:PIE_COLORS[i%PIE_COLORS.length],flexShrink:0}} />
+                      <span style={{fontSize:'0.82rem',color:'var(--text2)',textTransform:'capitalize',flex:1}}>{p.name}</span>
+                      <span style={{fontSize:'0.85rem',fontWeight:700,color:'var(--accent)',fontFamily:'Rajdhani'}}>₹{Number(p.value).toLocaleString('en-IN')}</span>
+                      <span style={{fontSize:'0.72rem',color:'var(--text3)'}}>({Math.round(p.value/totalIncome*100)}%)</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Month-wise breakdown table */}
           <div className="card">
             <h3 style={{ fontFamily: 'Rajdhani', marginBottom: 14, fontSize: '0.95rem', color: 'var(--text2)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>Month-wise Revenue</h3>
             <div className="table-wrap">

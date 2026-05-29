@@ -20,12 +20,9 @@ function MobileInput({ label, value, onChange, required }) {
   return (
     <div className="form-group">
       <label>{label}{required && ' *'}</label>
-      <input
-        value={value} onChange={e => onChange(e.target.value.replace(/\D/g,'').slice(0,10))}
-        placeholder="10-digit mobile"
-        maxLength={10} inputMode="numeric"
-        style={{ borderColor: value && err ? 'var(--danger)' : '' }}
-      />
+      <input value={value} onChange={e => onChange(e.target.value.replace(/\D/g,'').slice(0,10))}
+        placeholder="10-digit mobile" maxLength={10} inputMode="numeric"
+        style={{ borderColor: value && err ? 'var(--danger)' : '' }} />
       {value && err && <span style={{fontSize:'0.72rem',color:'var(--danger)'}}>{err}</span>}
     </div>
   );
@@ -36,11 +33,9 @@ function AadharInput({ value, onChange }) {
   return (
     <div className="form-group">
       <label>Aadhar Number *</label>
-      <input
-        value={value} onChange={e => onChange(e.target.value.replace(/\D/g,'').slice(0,12))}
+      <input value={value} onChange={e => onChange(e.target.value.replace(/\D/g,'').slice(0,12))}
         placeholder="12-digit Aadhar" maxLength={12} inputMode="numeric"
-        style={{ borderColor: value && err ? 'var(--danger)' : '', letterSpacing: value ? '0.1em' : '' }}
-      />
+        style={{ borderColor: value && err ? 'var(--danger)' : '', letterSpacing: value ? '0.1em' : '' }} />
       {value && <span style={{fontSize:'0.72rem',color: err ? 'var(--danger)' : 'var(--success)'}}>{err || `✓ ${value.length}/12 digits`}</span>}
     </div>
   );
@@ -161,7 +156,13 @@ export default function Members() {
 
   const doPrint = (ref) => {
     const w = window.open('', '_blank');
-    w.document.write(`<html><head><title>Print</title><link href="https://fonts.googleapis.com/css2?family=Noto+Sans:wght@400;600;700&family=Noto+Sans+Devanagari:wght@400;600;700&display=swap" rel="stylesheet"><style>*{box-sizing:border-box;margin:0;padding:0;}body{font-family:"Noto Sans","Noto Sans Devanagari",sans-serif;padding:24px;color:#111;font-size:13px;}@media print{@page{margin:10mm;}}</style></head><body>`);
+    w.document.write(`<html><head><title>Print</title>
+      <link href="https://fonts.googleapis.com/css2?family=Noto+Sans:wght@400;600;700&family=Noto+Sans+Devanagari:wght@400;600;700&display=swap" rel="stylesheet">
+      <style>
+        *{box-sizing:border-box;margin:0;padding:0;}
+        body{font-family:"Noto Sans","Noto Sans Devanagari",sans-serif;color:#111;font-size:11.5px;}
+        @media print{@page{margin:6mm;size:A4;}body{padding:0;}}
+      </style></head><body>`);
     w.document.write(ref.current.innerHTML);
     w.document.write('</body></html>');
     w.document.close();
@@ -170,29 +171,23 @@ export default function Members() {
 
   const totalPages = Math.ceil(total / PAGE_SIZE);
   const archivedTotalPages = Math.ceil(archivedTotal / PAGE_SIZE);
-
   const inputStyle = { width:'100%', background:'var(--bg3)', border:'1px solid var(--border)', borderRadius:6, padding:'9px 12px', color:'var(--text)', outline:'none', fontSize:'0.88rem' };
 
   return (
     <div>
       <div className="page-header">
-        <div>
-          <h2>Member Registration</h2>
-          <p>{total} active · {archivedTotal} archived</p>
-        </div>
+        <div><h2>Member Registration</h2><p>{total} active · {archivedTotal} archived</p></div>
         <div style={{display:'flex',gap:10,flexWrap:'wrap'}}>
           <button className="btn btn-secondary" onClick={() => setShowRules(true)}>📜 Rules</button>
           {tab === 'active' && <button className="btn btn-primary" onClick={() => open()}>+ Register Member</button>}
         </div>
       </div>
 
-      {/* Tabs */}
       <div className="tabs">
         <button className={`tab ${tab==='active'?'active':''}`} onClick={() => setTab('active')}>Active ({total})</button>
         <button className={`tab ${tab==='archived'?'active':''}`} onClick={() => setTab('archived')}>🗂 Archived ({archivedTotal})</button>
       </div>
 
-      {/* Search + Filter bar */}
       <div className="card" style={{marginBottom:14,display:'flex',gap:10,flexWrap:'wrap',alignItems:'center'}}>
         <input style={{...inputStyle,flex:2,minWidth:200}} placeholder="Search by name, mobile, room, aadhar, member ID..."
           value={search} onChange={e => handleSearch(e.target.value)} />
@@ -205,7 +200,6 @@ export default function Members() {
         )}
       </div>
 
-      {/* Active Members */}
       {tab === 'active' && (
         <div className="card">
           <div className="table-wrap">
@@ -235,7 +229,6 @@ export default function Members() {
               </tbody>
             </table>
           </div>
-          {/* Pagination */}
           {totalPages > 1 && (
             <div style={{display:'flex',gap:8,justifyContent:'center',marginTop:16,alignItems:'center',flexWrap:'wrap'}}>
               <button className="btn btn-secondary btn-xs" disabled={page===1} onClick={() => { setPage(1); loadActive(1); }}>«</button>
@@ -248,7 +241,6 @@ export default function Members() {
         </div>
       )}
 
-      {/* Archived Members */}
       {tab === 'archived' && (
         <div className="card" style={{border:'1px solid rgba(243,156,18,0.25)'}}>
           <div style={{marginBottom:12,padding:'10px 12px',background:'rgba(243,156,18,0.06)',borderRadius:6,fontSize:'0.82rem',color:'var(--text2)'}}>
@@ -298,7 +290,7 @@ export default function Members() {
                 <div style={{fontWeight:600,color:'var(--text)'}}>{showVacateModal.name}</div>
                 <div style={{fontSize:'0.82rem',color:'var(--text2)',marginTop:2}}>{showVacateModal.mobileNo} · {showVacateModal.roomNumber ? `Room ${showVacateModal.roomNumber}` : 'No room'}</div>
               </div>
-              <p style={{color:'var(--text2)',fontSize:'0.85rem',marginBottom:14}}>This will <strong style={{color:'var(--accent)'}}>move to Archive</strong> and free up their room. Data is preserved and can be restored later.</p>
+              <p style={{color:'var(--text2)',fontSize:'0.85rem',marginBottom:14}}>This will <strong style={{color:'var(--accent)'}}>move to Archive</strong> and free up their room.</p>
               <div className="form-group">
                 <label>Reason for Vacating</label>
                 <select value={vacateReason} onChange={e=>setVacateReason(e.target.value)} style={inputStyle}>
@@ -339,17 +331,14 @@ export default function Members() {
                 <div className="form-group"><label>Student / Occupation</label><input {...F('studentOccupation')} placeholder="e.g. B.Com 2nd Year" /></div>
                 <div className="form-group"><label>Admission Date</label><input {...F('admissionDate')} type="date" /></div>
                 <div className="form-group full"><label>Permanent Address</label><textarea {...F('permanentAddress')} rows={2} style={{resize:'vertical',width:'100%',background:'var(--bg3)',border:'1px solid var(--border)',borderRadius:6,padding:'9px 12px',color:'var(--text)',outline:'none',fontSize:'0.88rem'}} /></div>
-
                 <div className="section-divider">Father's Details</div>
                 <div className="form-group"><label>Father's Name</label><input {...F('fathersName')} /></div>
                 <MobileInput label="Father's Mobile" value={form.fathersMobileNo} onChange={setF('fathersMobileNo')} />
                 <div className="form-group"><label>Father's Occupation</label><input {...F('fathersOccupation')} /></div>
-
                 <div className="section-divider">Permanent Address Relative</div>
                 <div className="form-group"><label>Name</label><input {...F('permanentAddressRelativeName')} /></div>
                 <MobileInput label="Mobile" value={form.permanentAddressRelativeMobile} onChange={setF('permanentAddressRelativeMobile')} />
                 <div className="form-group full"><label>Address</label><textarea {...F('permanentAddressRelativeAddress')} rows={2} style={{resize:'vertical',width:'100%',background:'var(--bg3)',border:'1px solid var(--border)',borderRadius:6,padding:'9px 12px',color:'var(--text)',outline:'none',fontSize:'0.88rem'}} /></div>
-
                 <div className="section-divider">Local Relative</div>
                 <div className="form-group"><label>Name</label><input {...F('localRelativeName')} /></div>
                 <MobileInput label="Mobile" value={form.localRelativeMobile} onChange={setF('localRelativeMobile')} />
@@ -367,9 +356,9 @@ export default function Members() {
       {/* Print Member Modal */}
       {showPrintMember && (
         <div className="modal-overlay" onClick={e=>e.target===e.currentTarget&&setShowPrintMember(null)}>
-          <div className="modal" style={{maxWidth:680}}>
+          <div className="modal" style={{maxWidth:700}}>
             <div className="modal-header"><h3>Member Form — {showPrintMember.name}</h3><button className="close-btn" onClick={()=>setShowPrintMember(null)}>✕</button></div>
-            <div className="modal-body" style={{background:'white'}}><div ref={printMemberRef}><MemberPrintCard member={showPrintMember} /></div></div>
+            <div className="modal-body" style={{background:'white',padding:0}}><div ref={printMemberRef}><MemberPrintCard member={showPrintMember} /></div></div>
             <div className="modal-footer">
               <button className="btn btn-secondary" onClick={()=>setShowPrintMember(null)}>Close</button>
               <button className="btn btn-primary" onClick={()=>doPrint(printMemberRef)}>🖨 Print / PDF</button>
@@ -378,50 +367,7 @@ export default function Members() {
         </div>
       )}
 
-      {/* Restore Modal */}
-      {showRestoreModal && (
-        <div className="modal-overlay" onClick={e=>e.target===e.currentTarget&&setShowRestoreModal(null)}>
-          <div className="modal" style={{maxWidth:420}}>
-            <div className="modal-header">
-              <h3>↩ Restore Member</h3>
-              <button className="close-btn" onClick={()=>setShowRestoreModal(null)}>✕</button>
-            </div>
-            <div className="modal-body">
-              <div style={{background:'rgba(46,204,113,0.07)',border:'1px solid rgba(46,204,113,0.25)',borderRadius:8,padding:'12px 14px',marginBottom:16}}>
-                <div style={{fontWeight:600,color:'var(--text)'}}>{showRestoreModal.name}</div>
-                <div style={{fontSize:'0.82rem',color:'var(--text3)',marginTop:3}}>
-                  {showRestoreModal.memberId && `ID: ${showRestoreModal.memberId} · `}
-                  {showRestoreModal.mobileNo} · Vacated from Room {showRestoreModal.roomNumber || '—'}
-                </div>
-                <div style={{fontSize:'0.78rem',color:'var(--text3)',marginTop:2}}>
-                  Vacated on: {showRestoreModal.vacatedOn ? new Date(showRestoreModal.vacatedOn).toLocaleDateString('en-IN') : '—'} · Reason: {showRestoreModal.vacatedReason || '—'}
-                </div>
-              </div>
-              <div className="form-group">
-                <label>Assign to Room (optional)</label>
-                <select value={restoreRoom} onChange={e=>setRestoreRoom(e.target.value)}
-                  style={{background:'var(--bg3)',border:'1px solid var(--border)',borderRadius:6,padding:'10px 12px',color:'var(--text)',outline:'none',width:'100%'}}>
-                  <option value="">— No room (assign later in Room Details) —</option>
-                  {Array.from({length:20},(_,i)=>i+1).map(n=>(
-                    <option key={n} value={n}>Room {n}</option>
-                  ))}
-                </select>
-                <div style={{fontSize:'0.72rem',color:'var(--text3)',marginTop:5}}>
-                  💡 You can assign or change the room after restoring via Room Details section
-                </div>
-              </div>
-            </div>
-            <div className="modal-footer">
-              <button className="btn btn-secondary" onClick={()=>setShowRestoreModal(null)}>Cancel</button>
-              <button className="btn btn-success" onClick={()=>handleRestore(showRestoreModal._id, showRestoreModal.name, restoreRoom)}>
-                ↩ Restore{restoreRoom ? ` to Room ${restoreRoom}` : ' (No Room)'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-            {/* Rules Modal */}
+      {/* Rules Modal */}
       {showRules && (
         <div className="modal-overlay" onClick={e=>e.target===e.currentTarget&&setShowRules(false)}>
           <div className="modal" style={{maxWidth:680}}>
@@ -438,106 +384,125 @@ export default function Members() {
   );
 }
 
+/* ─────────────────────────────────────────────────────────────────────────────
+   MEMBER PRINT CARD — fits on ONE A4 page
+   Changes:
+   • Removed Due Date from top bar
+   • Member ID + Admission Date shifted left (now positions 2 & 3, right of Room No.)
+   • Added Police Verification Date + Hostel Leaving Date boxes (blank for pen)
+   • Tighter spacing throughout — guaranteed single page
+───────────────────────────────────────────────────────────────────────────── */
 function MemberPrintCard({ member }) {
-  const row = (label, value) => (
-    <div style={{display:'flex',borderBottom:'1px solid #eee',padding:'6px 0',fontSize:'13px',gap:8}}>
-      <span style={{minWidth:210,color:'#555',fontWeight:600,flexShrink:0}}>{label}</span>
-      <span style={{color:'#111'}}>{value||'—'}</span>
+  const fmtDate = (d) => d ? new Date(d).toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'}) : '—';
+
+  const row = (label, value, highlight=false) => (
+    <div style={{display:'flex',borderBottom:'1px solid #e8e8e8',padding:'4px 0',fontSize:'11.5px',gap:6}}>
+      <span style={{minWidth:195,color:'#555',fontWeight:600,flexShrink:0,fontSize:'11px'}}>{label}</span>
+      <span style={{color: highlight ? '#111' : '#222',fontWeight: highlight?700:400}}>{value||'—'}</span>
     </div>
   );
-  const fmtDate = (d) => d ? new Date(d).toLocaleDateString('en-IN',{day:'2-digit',month:'long',year:'numeric'}) : '—';
 
   return (
-    <div style={{fontFamily:'"Noto Sans","Noto Sans Devanagari",sans-serif',color:'#111',padding:'20px',background:'white'}}>
+    <div style={{fontFamily:'"Noto Sans","Noto Sans Devanagari",sans-serif',color:'#111',padding:'12px 16px',background:'white'}}>
 
-      {/* ── Top header: Title + Photo ───────────────────────────────────── */}
-      <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',marginBottom:10,paddingBottom:10,borderBottom:'2px solid #111'}}>
+      {/* ── Header: Title + Photo ── */}
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8,paddingBottom:7,borderBottom:'2.5px solid #111'}}>
         <div>
-          <div style={{fontSize:'1.5rem',fontWeight:700,letterSpacing:1}}>HOSTEL MANAGER</div>
-          <div style={{fontSize:'0.78rem',color:'#666',marginTop:2,letterSpacing:'0.05em'}}>किरायेदार पंजीकरण फॉर्म / Member Registration Form</div>
+          <div style={{fontSize:'1.25rem',fontWeight:800,letterSpacing:1.5,lineHeight:1}}>HOSTEL MANAGER</div>
+          <div style={{fontSize:'9.5px',color:'#666',marginTop:3,letterSpacing:'0.06em'}}>किरायेदार पंजीकरण फॉर्म / Member Registration Form</div>
         </div>
-        <div style={{width:90,height:110,border:'2px dashed #999',display:'flex',alignItems:'center',justifyContent:'center',flexDirection:'column',color:'#aaa',fontSize:'10px',textAlign:'center',borderRadius:4,flexShrink:0,marginLeft:12}}>
-          <div style={{fontSize:'22px'}}>📷</div><div>Paste Photo</div>
+        <div style={{width:72,height:88,border:'2px dashed #bbb',display:'flex',alignItems:'center',justifyContent:'center',flexDirection:'column',color:'#bbb',fontSize:'9px',textAlign:'center',borderRadius:3,flexShrink:0,marginLeft:10}}>
+          <div style={{fontSize:'16px'}}>📷</div><div style={{marginTop:2}}>Paste Photo</div>
         </div>
       </div>
 
-      {/* ── KEY INFO BAR: Room + Due Date + Member ID + Admission Date ──── */}
-      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr 1fr',gap:0,marginBottom:14,border:'2px solid #111',borderRadius:6,overflow:'hidden'}}>
-        <div style={{padding:'10px 12px',borderRight:'1px solid #ddd',background:'#f8f8f8'}}>
-          <div style={{fontSize:'10px',color:'#888',textTransform:'uppercase',letterSpacing:'0.08em',marginBottom:3}}>Room No.</div>
-          <div style={{fontSize:'1.6rem',fontWeight:900,color:'#111',fontFamily:'Rajdhani,sans-serif',letterSpacing:1}}>
+      {/* ── KEY INFO BAR: Room | Member ID | Admission Date | Police Verif. Date | Leaving Date ── */}
+      <div style={{display:'grid',gridTemplateColumns:'0.8fr 1.1fr 1.1fr 1.1fr 1.1fr',gap:0,marginBottom:10,border:'2px solid #111',borderRadius:5,overflow:'hidden'}}>
+        {/* 1. Room No */}
+        <div style={{padding:'7px 9px',borderRight:'1px solid #ddd',background:'#f5f5f5'}}>
+          <div style={{fontSize:'8.5px',color:'#888',textTransform:'uppercase',letterSpacing:'0.07em',marginBottom:2}}>Room No.</div>
+          <div style={{fontSize:'1.5rem',fontWeight:900,color:'#111',fontFamily:'Rajdhani,sans-serif',lineHeight:1}}>
             {member.roomNumber ? `R${member.roomNumber}` : '—'}
           </div>
         </div>
-        <div style={{padding:'10px 12px',borderRight:'1px solid #ddd',background:'#f8f8f8'}}>
-          <div style={{fontSize:'10px',color:'#888',textTransform:'uppercase',letterSpacing:'0.08em',marginBottom:3}}>Due Date</div>
-          <div style={{fontSize:'1rem',fontWeight:700,color:member.roomLeavingDate ? '#c00' : '#aaa'}}>
-            {member.roomLeavingDate ? fmtDate(member.roomLeavingDate) : '—'}
-          </div>
-        </div>
-        <div style={{padding:'10px 12px',borderRight:'1px solid #ddd',background:'#fff9e6'}}>
-          <div style={{fontSize:'10px',color:'#888',textTransform:'uppercase',letterSpacing:'0.08em',marginBottom:3}}>Member ID</div>
-          <div style={{fontSize:'1.3rem',fontWeight:900,color:'#b8860b',fontFamily:'monospace',letterSpacing:1}}>
+        {/* 2. Member ID */}
+        <div style={{padding:'7px 9px',borderRight:'1px solid #ddd',background:'#fff9e6'}}>
+          <div style={{fontSize:'8.5px',color:'#888',textTransform:'uppercase',letterSpacing:'0.07em',marginBottom:2}}>Member ID</div>
+          <div style={{fontSize:'1rem',fontWeight:900,color:'#b8860b',fontFamily:'monospace',letterSpacing:1,lineHeight:1.2}}>
             {member.memberId || '—'}
           </div>
         </div>
-        <div style={{padding:'10px 12px',background:'#fff9e6'}}>
-          <div style={{fontSize:'10px',color:'#888',textTransform:'uppercase',letterSpacing:'0.08em',marginBottom:3}}>Admission Date</div>
-          <div style={{fontSize:'1rem',fontWeight:700,color:'#b8860b'}}>
+        {/* 3. Admission Date */}
+        <div style={{padding:'7px 9px',borderRight:'1px solid #ddd',background:'#fff9e6'}}>
+          <div style={{fontSize:'8.5px',color:'#888',textTransform:'uppercase',letterSpacing:'0.07em',marginBottom:2}}>Admission Date</div>
+          <div style={{fontSize:'0.82rem',fontWeight:700,color:'#b8860b',lineHeight:1.2}}>
             {member.admissionDate ? fmtDate(member.admissionDate) : '—'}
+          </div>
+        </div>
+        {/* 4. Police Verification Date — blank for pen */}
+        <div style={{padding:'7px 9px',borderRight:'1px solid #ddd',background:'#f0f8ff'}}>
+          <div style={{fontSize:'8.5px',color:'#888',textTransform:'uppercase',letterSpacing:'0.07em',marginBottom:2}}>Police Verif. Date</div>
+          <div style={{fontSize:'0.78rem',color:'#bbb',borderBottom:'1px dashed #bbb',minHeight:22,marginTop:4}}>
+            {member.policeFormVerified ? '✓ Verified' : ''}
+          </div>
+        </div>
+        {/* 5. Hostel Leaving Date — blank for pen */}
+        <div style={{padding:'7px 9px',background:'#fff5f5'}}>
+          <div style={{fontSize:'8.5px',color:'#888',textTransform:'uppercase',letterSpacing:'0.07em',marginBottom:2}}>Hostel Leaving Date</div>
+          <div style={{fontSize:'0.78rem',color:'#bbb',borderBottom:'1px dashed #bbb',minHeight:22,marginTop:4}}>
+            {member.roomLeavingDate ? fmtDate(member.roomLeavingDate) : ''}
           </div>
         </div>
       </div>
 
-      {/* ── Personal Details ────────────────────────────────────────────── */}
-      <div style={{fontWeight:700,fontSize:'11px',textTransform:'uppercase',letterSpacing:'0.08em',color:'#444',margin:'10px 0 6px',paddingBottom:3,borderBottom:'1px solid #ddd'}}>
+      {/* ── Personal Details ── */}
+      <div style={{fontWeight:700,fontSize:'9.5px',textTransform:'uppercase',letterSpacing:'0.08em',color:'#444',margin:'7px 0 4px',paddingBottom:2,borderBottom:'1px solid #ddd'}}>
         Personal Information
       </div>
-      {row('Name / नाम', member.name)}
+      {row('Name / नाम', member.name, true)}
       {row('Mobile / मोबाइल', member.mobileNo)}
       {row('Aadhar / आधार', member.aadharNumber)}
       {row('Occupation / व्यवसाय', member.studentOccupation)}
       {row('Permanent Address / स्थायी पता', member.permanentAddress)}
 
-      <div style={{fontWeight:700,fontSize:'11px',textTransform:'uppercase',letterSpacing:'0.08em',color:'#444',margin:'10px 0 6px',paddingBottom:3,borderBottom:'1px solid #ddd'}}>
+      <div style={{fontWeight:700,fontSize:'9.5px',textTransform:'uppercase',letterSpacing:'0.08em',color:'#444',margin:'7px 0 4px',paddingBottom:2,borderBottom:'1px solid #ddd'}}>
         Father's Details / पिता की जानकारी
       </div>
       {row("Father's Name / पिता का नाम", member.fathersName)}
-      {row("Father's Mobile", member.fathersMobileNo)}
-      {row("Father's Occupation", member.fathersOccupation)}
+      {row("Father's Mobile / मोबाइल", member.fathersMobileNo)}
+      {row("Father's Occupation / व्यवसाय", member.fathersOccupation)}
 
-      <div style={{fontWeight:700,fontSize:'11px',textTransform:'uppercase',letterSpacing:'0.08em',color:'#444',margin:'10px 0 6px',paddingBottom:3,borderBottom:'1px solid #ddd'}}>
+      <div style={{fontWeight:700,fontSize:'9.5px',textTransform:'uppercase',letterSpacing:'0.08em',color:'#444',margin:'7px 0 4px',paddingBottom:2,borderBottom:'1px solid #ddd'}}>
         Permanent Address Relative / स्थायी पते का परिचित
       </div>
-      {row('Name', member.permanentAddressRelativeName)}
-      {row('Mobile', member.permanentAddressRelativeMobile)}
-      {row('Address', member.permanentAddressRelativeAddress)}
+      {row('Name / नाम', member.permanentAddressRelativeName)}
+      {row('Mobile / मोबाइल', member.permanentAddressRelativeMobile)}
+      {row('Address / पता', member.permanentAddressRelativeAddress)}
 
-      <div style={{fontWeight:700,fontSize:'11px',textTransform:'uppercase',letterSpacing:'0.08em',color:'#444',margin:'10px 0 6px',paddingBottom:3,borderBottom:'1px solid #ddd'}}>
+      <div style={{fontWeight:700,fontSize:'9.5px',textTransform:'uppercase',letterSpacing:'0.08em',color:'#444',margin:'7px 0 4px',paddingBottom:2,borderBottom:'1px solid #ddd'}}>
         Local Relative / स्थानीय परिचित
       </div>
-      {row('Name', member.localRelativeName)}
-      {row('Mobile', member.localRelativeMobile)}
-      {row('Address', member.localRelativeAddress)}
+      {row('Name / नाम', member.localRelativeName)}
+      {row('Mobile / मोबाइल', member.localRelativeMobile)}
+      {row('Address / पता', member.localRelativeAddress)}
 
-      <div style={{fontWeight:700,fontSize:'11px',textTransform:'uppercase',letterSpacing:'0.08em',color:'#444',margin:'10px 0 6px',paddingBottom:3,borderBottom:'1px solid #ddd'}}>
+      <div style={{fontWeight:700,fontSize:'9.5px',textTransform:'uppercase',letterSpacing:'0.08em',color:'#444',margin:'7px 0 4px',paddingBottom:2,borderBottom:'1px solid #ddd'}}>
         Room Details / कमरे की जानकारी
       </div>
       {row('Monthly Rent / किराया', member.rent ? `₹${Number(member.rent).toLocaleString('en-IN')}` : '—')}
       {row('Advance / एडवांस', member.advance ? `₹${Number(member.advance).toLocaleString('en-IN')}` : '—')}
       {row('Join Date / प्रवेश दिनांक', member.roomJoinDate ? fmtDate(member.roomJoinDate) : '—')}
-      {row('Police Form / पुलिस फॉर्म', member.policeFormVerified ? 'Verified ✓' : 'Pending')}
 
-      {/* ── Signature Footer ───────────────────────────────────────────── */}
-      <div style={{display:'flex',justifyContent:'space-between',marginTop:40,paddingTop:16,borderTop:'1px solid #ddd'}}>
+      {/* ── Signatures ── */}
+      <div style={{display:'flex',justifyContent:'space-between',marginTop:18,paddingTop:12,borderTop:'1px solid #ddd'}}>
         <div style={{textAlign:'center',width:'45%'}}>
-          <div style={{borderTop:'1px solid #333',paddingTop:8,fontSize:'12px',color:'#555'}}>
-            किरायेदार के हस्ताक्षर<br/><span style={{fontSize:'11px'}}>(Tenant Signature)</span>
+          <div style={{borderTop:'1px solid #333',paddingTop:6,fontSize:'10.5px',color:'#555'}}>
+            किरायेदार के हस्ताक्षर<br/><span style={{fontSize:'10px'}}>(Tenant Signature)</span>
           </div>
         </div>
         <div style={{textAlign:'center',width:'45%'}}>
-          <div style={{borderTop:'1px solid #333',paddingTop:8,fontSize:'12px',color:'#555'}}>
-            मकान मालिक के हस्ताक्षर<br/><span style={{fontSize:'11px'}}>(Owner Signature)</span>
+          <div style={{borderTop:'1px solid #333',paddingTop:6,fontSize:'10.5px',color:'#555'}}>
+            मकान मालिक के हस्ताक्षर<br/><span style={{fontSize:'10px'}}>(Owner Signature)</span>
           </div>
         </div>
       </div>

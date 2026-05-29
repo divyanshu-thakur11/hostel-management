@@ -143,10 +143,12 @@ function PoliceForm({ member, thana, address, officeAddress, duration, ownerMobi
       <div style={{fontWeight:700,textAlign:'center',textDecoration:'underline',marginBottom:10,fontSize:'1rem'}}>किरायेदार की जानकारी</div>
 
       <p>
-        <strong>4. किरायेदार का नाम, उपनाम –</strong> {s(member?.name)}
+        <strong>4. किरायेदार का नाम, उपनाम –</strong> {s(member?.name)} &nbsp;&nbsp;
+        <strong>मो. नं. –</strong> {s(member?.mobileNo)}
       </p>
       <p style={{paddingLeft:16}}>
-        <strong>पिता का नाम –</strong> {s(member?.fathersName)}
+        <strong>पिता का नाम –</strong> {s(member?.fathersName)} &nbsp;&nbsp;
+        <strong>मो. नं. –</strong> {s(member?.fathersMobileNo)}
       </p>
 
       <p><strong>5. किरायेदार का स्थायी पता –</strong> {s(member?.permanentAddress)}</p>

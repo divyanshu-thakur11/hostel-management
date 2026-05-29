@@ -144,6 +144,7 @@ function Sidebar({ user, activeHostel, unreadCount, sidebarOpen, onClose, onLogo
         </nav>
 
         <div style={{ padding:'10px', borderTop:'1px solid var(--border)', display:'flex', flexDirection:'column', gap:6 }}>
+          <ThemeToggle />
           <button onClick={onLogout} style={{ display:'flex', alignItems:'center', justifyContent:'center', gap:6, background:'rgba(231,76,60,0.08)', border:'1px solid rgba(231,76,60,0.2)', color:'var(--danger)', borderRadius:6, padding:'7px', cursor:'pointer', fontSize:'0.78rem', fontWeight:600, fontFamily:'Rajdhani', width:'100%' }}>
             🚪 Logout
           </button>
@@ -204,7 +205,27 @@ function Sidebar({ user, activeHostel, unreadCount, sidebarOpen, onClose, onLogo
   );
 }
 
-function AppShell() {
+function ThemeToggle() {
+  const [dark, setDark] = useState(() => localStorage.getItem('hm_theme') !== 'light');
+  const toggle = () => {
+    const next = !dark;
+    setDark(next);
+    localStorage.setItem('hm_theme', next ? 'dark' : 'light');
+    document.documentElement.setAttribute('data-theme', next ? 'dark' : 'light');
+  };
+  useEffect(() => {
+    document.documentElement.setAttribute('data-theme', dark ? 'dark' : 'light');
+  }, []);
+  return (
+    <button onClick={toggle} title={dark ? 'Switch to Light Mode' : 'Switch to Dark Mode'}
+      style={{display:'flex',alignItems:'center',gap:7,width:'100%',padding:'8px 12px',border:'none',background:'none',cursor:'pointer',color:'var(--text3)',fontSize:'0.8rem',borderRadius:6,transition:'all 0.15s'}}
+      onMouseEnter={e=>e.currentTarget.style.background='var(--bg3)'}
+      onMouseLeave={e=>e.currentTarget.style.background='none'}>
+      <span style={{fontSize:'1rem'}}>{dark ? '☀️' : '🌙'}</span>
+      {dark ? 'Light Mode' : 'Dark Mode'}
+    </button>
+  );
+}
   const [user, setUser] = useState(() => { try { return JSON.parse(localStorage.getItem('hm_user')); } catch { return null; } });
   const [mustChangePw, setMustChangePw] = useState(false);
   const { activeHostel, loadHostel, switchHostel } = useHostel();

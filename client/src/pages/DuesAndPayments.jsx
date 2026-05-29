@@ -52,11 +52,15 @@ export default function DuesAndPayments() {
     m.isActive !== false && m.roomLeavingDate && new Date(m.roomLeavingDate) < today
   ).sort((a, b) => new Date(a.roomLeavingDate) - new Date(b.roomLeavingDate));
 
-  // ── Expiring soon ────────────────────────────────────────────────────────
-  const in7 = new Date(); in7.setDate(today.getDate() + 7);
+  // ── Expiring soon — user-selectable date range (default: today → +7 days) ─
+  const [expireFrom, setExpireFrom] = useState('');
+  const [expireTo,   setExpireTo]   = useState('');
+  const expireFromDate = expireFrom ? new Date(expireFrom) : (() => { const d = new Date(today); d.setHours(0,0,0,0); return d; })();
+  const expireToDate   = expireTo   ? new Date(expireTo)   : (() => { const d = new Date(today); d.setDate(d.getDate()+7); return d; })();
   const expiringSoon = members.filter(m =>
     m.isActive !== false && m.roomLeavingDate &&
-    new Date(m.roomLeavingDate) >= today && new Date(m.roomLeavingDate) <= in7
+    new Date(m.roomLeavingDate) >= expireFromDate &&
+    new Date(m.roomLeavingDate) <= expireToDate
   ).sort((a, b) => new Date(a.roomLeavingDate) - new Date(b.roomLeavingDate));
 
   // ── Per-room dues: rent + electric for current month ─────────────────────
@@ -374,8 +378,23 @@ export default function DuesAndPayments() {
       {/* ── EXPIRING SOON TAB ─────────────────────────────────────────────── */}
       {tab === 'expiring' && (
         <div className="card">
-          <div style={{marginBottom:12,padding:'10px 14px',background:'rgba(240,165,0,0.06)',borderRadius:6,fontSize:'0.83rem',color:'var(--text2)'}}>
-            ⏰ Members' plans expiring within 7 days. Send a renewal reminder.
+          {/* Date range picker */}
+          <div style={{display:'flex',gap:10,alignItems:'center',flexWrap:'wrap',marginBottom:14,padding:'12px 14px',background:'rgba(240,165,0,0.05)',borderRadius:8,border:'1px solid rgba(240,165,0,0.15)'}}>
+            <span style={{fontSize:'0.8rem',color:'var(--text3)',fontWeight:600,whiteSpace:'nowrap'}}>⏰ Show expiring:</span>
+            <div style={{display:'flex',alignItems:'center',gap:6}}>
+              <label style={{fontSize:'0.75rem',color:'var(--text3)'}}>From</label>
+              <input type="date" value={expireFrom} onChange={e=>setExpireFrom(e.target.value)}
+                style={{background:'var(--bg3)',border:'1px solid var(--border2)',borderRadius:6,padding:'5px 8px',color:'var(--text)',fontSize:'0.82rem',outline:'none'}} />
+            </div>
+            <div style={{display:'flex',alignItems:'center',gap:6}}>
+              <label style={{fontSize:'0.75rem',color:'var(--text3)'}}>To</label>
+              <input type="date" value={expireTo} onChange={e=>setExpireTo(e.target.value)}
+                style={{background:'var(--bg3)',border:'1px solid var(--border2)',borderRadius:6,padding:'5px 8px',color:'var(--text)',fontSize:'0.82rem',outline:'none'}} />
+            </div>
+            {(expireFrom || expireTo) && (
+              <button className="btn btn-secondary btn-xs" onClick={()=>{setExpireFrom('');setExpireTo('');}}>✕ Reset to 7 days</button>
+            )}
+            <span style={{marginLeft:'auto',fontSize:'0.8rem',color:'var(--accent)',fontWeight:600}}>{expiringSoon.length} member{expiringSoon.length!==1?'s':''}</span>
           </div>
           {filterM(expiringSoon).length === 0 ? (
             <div className="empty-state"><div className="empty-icon">✅</div><p>No members expiring soon</p></div>

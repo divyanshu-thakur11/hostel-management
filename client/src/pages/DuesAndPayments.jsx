@@ -41,6 +41,29 @@ export default function DuesAndPayments() {
   const curMon = now.getMonth() + 1;
   const curYr  = now.getFullYear();
 
+  // ── Print helper ──────────────────────────────────────────────────────────
+  const doPrint = (title, html) => {
+    const w = window.open('', '_blank');
+    w.document.write(`<!DOCTYPE html><html><head><title>${title}</title>
+      <style>
+        *{box-sizing:border-box;margin:0;padding:0;}
+        body{font-family:Arial,sans-serif;font-size:12px;color:#111;padding:16px;}
+        h2{font-size:1.1rem;margin-bottom:4px;}p{font-size:0.75rem;color:#666;margin-bottom:14px;}
+        table{width:100%;border-collapse:collapse;font-size:11.5px;}
+        th{background:#f5f5f5;padding:7px 10px;text-align:left;border-bottom:2px solid #ccc;font-size:10px;text-transform:uppercase;letter-spacing:0.05em;}
+        td{padding:7px 10px;border-bottom:1px solid #eee;}
+        tr:nth-child(even){background:#fafafa;}
+        .badge{display:inline-block;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:700;}
+        .red{color:#c0392b;font-weight:700;} .gold{color:#d4920a;font-weight:700;} .green{color:#1ea85c;font-weight:700;}
+        .footer{margin-top:20px;font-size:10px;color:#999;border-top:1px solid #eee;padding-top:8px;display:flex;justify-content:space-between;}
+        @media print{@page{margin:8mm;size:A4;}body{padding:0;}}
+      </style></head><body>${html}
+      <div class="footer"><span>Printed on ${new Date().toLocaleDateString('en-IN',{day:'2-digit',month:'long',year:'numeric'})}</span><span>Hostel Management System</span></div>
+      </body></html>`);
+    w.document.close();
+    setTimeout(() => w.print(), 400);
+  };
+
   // ── Part payments ────────────────────────────────────────────────────────
   const partPayments = receipts
     .filter(r => r.isPartPayment && (r.balanceDue || 0) > 0)
@@ -62,6 +85,20 @@ export default function DuesAndPayments() {
     new Date(m.roomLeavingDate) >= expireFromDate &&
     new Date(m.roomLeavingDate) <= expireToDate
   ).sort((a, b) => new Date(a.roomLeavingDate) - new Date(b.roomLeavingDate));
+
+  // Electric due for each expiring member's room (current month)
+  const getElecDueForRoom = (roomNumber) => {
+    const reading = electric.find(e => e.roomNumber === roomNumber && e.month === curMon && e.year === curYr);
+    if (!reading) return { elecTotal: 0, elecPaid: 0, elecDue: 0 };
+    const elecTotal = reading.totalAmount || 0;
+    const elecPaid  = receipts.filter(r =>
+      r.roomNumber === roomNumber &&
+      (r.packageName === 'electric' || r.paymentType === 'electric') &&
+      new Date(r.receiptDate).getMonth()+1 === curMon &&
+      new Date(r.receiptDate).getFullYear() === curYr
+    ).reduce((s,r) => s + (r.amountPaid || r.totalAmount || 0), 0);
+    return { elecTotal, elecPaid, elecDue: Math.max(0, elecTotal - elecPaid) };
+  };
 
   // ── Per-room dues: rent + electric for current month ─────────────────────
   // Build room dues: for each occupied room, calculate:
@@ -186,10 +223,27 @@ export default function DuesAndPayments() {
       {/* ── ROOM DUES TAB ─────────────────────────────────────────────────── */}
       {tab === 'dues' && (
         <div>
-          <div style={{marginBottom:12,padding:'10px 14px',background:'rgba(231,76,60,0.06)',borderRadius:6,fontSize:'0.83rem',color:'var(--text2)'}}>
-            💡 Shows rent and electric dues for <strong>{MONTHS[curMon-1]} {curYr}</strong>.
-            Rent due = Fixed room rent minus what's already been paid this month.
-            Electric due = This month's meter reading bill minus what's been paid.
+          <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',flexWrap:'wrap',gap:10,marginBottom:12,padding:'10px 14px',background:'rgba(231,76,60,0.06)',borderRadius:6,fontSize:'0.83rem',color:'var(--text2)'}}>
+            <span>💡 Shows rent and electric dues for <strong>{MONTHS[curMon-1]} {curYr}</strong>. Rent due = Fixed room rent minus what's already been paid this month. Electric due = This month's meter reading bill minus what's been paid.</span>
+            <button className="btn btn-secondary btn-xs" onClick={() => {
+              const rows = filterR(roomDues).map(r => `
+                <tr>
+                  <td><strong>Room ${r.roomNumber}</strong></td>
+                  <td>${r.memberNames||'—'}</td>
+                  <td>${r.memberCount}</td>
+                  <td class="${r.fixedRent?'':''}">₹${(r.fixedRent||0).toLocaleString('en-IN')}</td>
+                  <td class="green">₹${(r.rentPaidThisMonth||0).toLocaleString('en-IN')}</td>
+                  <td class="${r.rentDue>0?'red':''}">₹${(r.rentDue||0).toLocaleString('en-IN')}</td>
+                  <td>₹${(r.elecTotal||0).toLocaleString('en-IN')}</td>
+                  <td class="${r.elecDue>0?'gold':''}">₹${(r.elecDue||0).toLocaleString('en-IN')}</td>
+                  <td class="${r.totalDue>0?'red':'green'}"><strong>₹${(r.totalDue||0).toLocaleString('en-IN')}</strong></td>
+                </tr>`).join('');
+              doPrint(`Room Dues — ${MONTHS[curMon-1]} ${curYr}`, `
+                <h2>Room Dues — ${MONTHS[curMon-1]} ${curYr}</h2>
+                <p>Total Rent Due: ₹${totalRentDue.toLocaleString('en-IN')} &nbsp;|&nbsp; Total Electric Due: ₹${totalElecDue.toLocaleString('en-IN')} &nbsp;|&nbsp; Grand Total: ₹${totalDueAll.toLocaleString('en-IN')}</p>
+                <table><thead><tr><th>Room</th><th>Members</th><th>Count</th><th>Fixed Rent</th><th>Paid</th><th>Rent Due</th><th>Elec Bill</th><th>Elec Due</th><th>Total Due</th></tr></thead>
+                <tbody>${rows}</tbody></table>`);
+            }}>🖨 Print Dues List</button>
           </div>
 
           {/* Summary row */}
@@ -395,25 +449,79 @@ export default function DuesAndPayments() {
               <button className="btn btn-secondary btn-xs" onClick={()=>{setExpireFrom('');setExpireTo('');}}>✕ Reset to 7 days</button>
             )}
             <span style={{marginLeft:'auto',fontSize:'0.8rem',color:'var(--accent)',fontWeight:600}}>{expiringSoon.length} member{expiringSoon.length!==1?'s':''}</span>
+            <button className="btn btn-secondary btn-xs" onClick={() => {
+              const rows = filterM(expiringSoon).map(m => {
+                const d   = Math.ceil((new Date(m.roomLeavingDate)-today)/(1000*60*60*24));
+                const elec = getElecDueForRoom(m.roomNumber);
+                return `<tr>
+                  <td><strong>${m.name}</strong></td>
+                  <td>Room ${m.roomNumber||'—'}</td>
+                  <td>${m.mobileNo||'—'}</td>
+                  <td>${new Date(m.roomLeavingDate).toLocaleDateString('en-IN')}</td>
+                  <td class="${d<=3?'red':'gold'}">${d} day${d!==1?'s':''} left</td>
+                  <td>${m.rent?'₹'+m.rent.toLocaleString('en-IN'):'—'}</td>
+                  <td class="${elec.elecDue>0?'gold':''}">${elec.elecDue>0?'₹'+elec.elecDue.toLocaleString('en-IN'):'—'}</td>
+                  <td class="${(m.rent||0)+(elec.elecDue)>0?'red':''}"><strong>₹${((m.rent||0)+(elec.elecDue)).toLocaleString('en-IN')}</strong></td>
+                </tr>`;
+              }).join('');
+              doPrint('Expiring Soon', `
+                <h2>Members Expiring Soon</h2>
+                <p>${expireFrom||'Today'} to ${expireTo||'+7 days'} &nbsp;|&nbsp; ${expiringSoon.length} members</p>
+                <table><thead><tr><th>Name</th><th>Room</th><th>Mobile</th><th>Expires On</th><th>Days Left</th><th>Monthly Rent</th><th>Elec Due</th><th>Total Due</th></tr></thead>
+                <tbody>${rows}</tbody></table>`);
+            }}>🖨 Print List</button>
           </div>
           {filterM(expiringSoon).length === 0 ? (
             <div className="empty-state"><div className="empty-icon">✅</div><p>No members expiring soon</p></div>
           ) : (
             <div className="table-wrap">
               <table>
-                <thead><tr><th>Member</th><th>Room</th><th>Mobile</th><th>Plan Expires</th><th>Days Left</th><th>Rent</th><th>Action</th></tr></thead>
+                <thead>
+                  <tr>
+                    <th>Member</th><th>Room</th><th>Mobile</th>
+                    <th>Plan Expires</th><th>Days Left</th>
+                    <th>Monthly Rent</th><th>Electric Due</th><th>Total Due</th>
+                    <th>Action</th>
+                  </tr>
+                </thead>
                 <tbody>
-                  {filterM(expiringSoon).map(m=>{
-                    const d = Math.ceil((new Date(m.roomLeavingDate)-today)/(1000*60*60*24));
+                  {filterM(expiringSoon).map(m => {
+                    const d    = Math.ceil((new Date(m.roomLeavingDate)-today)/(1000*60*60*24));
+                    const elec = getElecDueForRoom(m.roomNumber);
+                    const totalDueM = (m.rent||0) + elec.elecDue;
                     return (
                       <tr key={m._id}>
                         <td style={{color:'var(--text)',fontWeight:600}}>{m.name}</td>
                         <td>{m.roomNumber?<span className="badge badge-blue">Room {m.roomNumber}</span>:'—'}</td>
                         <td style={{fontSize:'0.82rem'}}>{m.mobileNo||'—'}</td>
                         <td style={{color:'var(--accent)'}}>{fmt(m.roomLeavingDate)}</td>
-                        <td><span style={{background:d<=3?'rgba(231,76,60,0.12)':'rgba(240,165,0,0.12)',color:d<=3?'var(--danger)':'var(--accent)',padding:'2px 10px',borderRadius:10,fontWeight:700,fontSize:'0.8rem'}}>{d} day{d!==1?'s':''} left</span></td>
+                        <td>
+                          <span style={{background:d<=3?'rgba(231,76,60,0.12)':'rgba(240,165,0,0.12)',color:d<=3?'var(--danger)':'var(--accent)',padding:'2px 10px',borderRadius:10,fontWeight:700,fontSize:'0.8rem'}}>
+                            {d} day{d!==1?'s':''} left
+                          </span>
+                        </td>
                         <td>{m.rent?fmtM(m.rent):'—'}</td>
-                        <td>{m.mobileNo&&<button style={{background:'#25d366',color:'white',border:'none',borderRadius:5,padding:'5px 10px',cursor:'pointer',fontSize:'0.72rem',fontWeight:700}} onClick={()=>wa.sendReminder(m.mobileNo,m.name,m.roomNumber,m.rent||0,'stay renewal')}>📱 Remind</button>}</td>
+                        <td style={{color:elec.elecDue>0?'var(--accent)':'var(--text3)',fontWeight:elec.elecDue>0?600:400}}>
+                          {elec.elecDue>0 ? (
+                            <span title={`Bill: ₹${elec.elecTotal} — Paid: ₹${elec.elecPaid}`}>
+                              {fmtM(elec.elecDue)}
+                              {elec.elecTotal>0 && <span style={{fontSize:'0.7rem',color:'var(--text3)',marginLeft:4}}>of ₹{elec.elecTotal.toLocaleString('en-IN')}</span>}
+                            </span>
+                          ) : <span style={{color:'var(--text3)'}}>—</span>}
+                        </td>
+                        <td style={{color:totalDueM>0?'var(--danger)':'var(--text3)',fontWeight:totalDueM>0?700:400}}>
+                          {totalDueM>0 ? fmtM(totalDueM) : '—'}
+                        </td>
+                        <td>
+                          <div style={{display:'flex',gap:4,flexWrap:'wrap'}}>
+                            {m.mobileNo && (
+                              <button style={{background:'#25d366',color:'white',border:'none',borderRadius:5,padding:'4px 8px',cursor:'pointer',fontSize:'0.72rem',fontWeight:700}}
+                                onClick={()=>wa.sendReminder(m.mobileNo,m.name,m.roomNumber,m.rent||0,'stay renewal')}>
+                                📱 Remind
+                              </button>
+                            )}
+                          </div>
+                        </td>
                       </tr>
                     );
                   })}

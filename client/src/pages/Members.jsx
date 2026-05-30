@@ -439,18 +439,16 @@ function MemberPrintCard({ member }) {
             {member.admissionDate ? fmtDate(member.admissionDate) : '—'}
           </div>
         </div>
-        {/* 4. Police Verification Date — blank for pen */}
+        {/* 4. Police Verification Date — always blank for pen */}
         <div style={{padding:'7px 9px',borderRight:'1px solid #ddd',background:'#f0f8ff'}}>
           <div style={{fontSize:'8.5px',color:'#888',textTransform:'uppercase',letterSpacing:'0.07em',marginBottom:2}}>Police Verif. Date</div>
           <div style={{fontSize:'0.78rem',color:'#bbb',borderBottom:'1px dashed #bbb',minHeight:22,marginTop:4}}>
-            {member.policeFormVerified ? '✓ Verified' : ''}
           </div>
         </div>
-        {/* 5. Hostel Leaving Date — blank for pen */}
+        {/* 5. Hostel Leaving Date — always blank for pen */}
         <div style={{padding:'7px 9px',background:'#fff5f5'}}>
           <div style={{fontSize:'8.5px',color:'#888',textTransform:'uppercase',letterSpacing:'0.07em',marginBottom:2}}>Hostel Leaving Date</div>
           <div style={{fontSize:'0.78rem',color:'#bbb',borderBottom:'1px dashed #bbb',minHeight:22,marginTop:4}}>
-            {member.roomLeavingDate ? fmtDate(member.roomLeavingDate) : ''}
           </div>
         </div>
       </div>

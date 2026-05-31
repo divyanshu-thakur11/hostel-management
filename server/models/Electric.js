@@ -10,6 +10,7 @@ const electricSchema = new mongoose.Schema({
   unitsConsumed: { type: Number },
   ratePerUnit: { type: Number, default: 8 },
   totalAmount: { type: Number },
+  isAnomaly: { type: Boolean, default: false }, // F3: anomaly detection flag
 }, { timestamps: true });
 
 electricSchema.pre('save', function(next) {

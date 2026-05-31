@@ -42,6 +42,7 @@ export default function Receipts() {
   const [form, setForm]             = useState(EMPTY);
   const [dueModal, setDueModal]     = useState(null);   // part-pay receipt to make due receipt for
   const [dueForm, setDueForm]       = useState({ modeOfPayment:'cash', receiptDate:'', notes:'' });
+  const [aiNotesLoading, setAiNotesLoading] = useState(false); // F7
   const [loading, setLoading]       = useState(false);
   const [search, setSearch]         = useState('');
   const [roomF, setRoomF]           = useState('');
@@ -198,6 +199,33 @@ export default function Receipts() {
       amountPaid: checked ? '' : p.totalAmount,
       balanceDue: checked ? p.totalAmount : '0',
     }));
+  };
+
+  // F7: AI-generated receipt notes
+  const generateAINote = async () => {
+    if (!form.roomNumber || !form.totalAmount) return;
+    setAiNotesLoading(true);
+    try {
+      const memberName = form.memberMode === 'all'
+        ? (roomMembers.map(m => m.name).join(', ') || 'All members')
+        : (form.memberName || 'Member');
+      const prompt = `Member: ${memberName}, Room: ${form.roomNumber}, Type: ${form.packageName}, Amount: ₹${form.totalAmount}, Mode: ${form.modeOfPayment}, Part payment: ${form.isPartPayment ? 'yes' : 'no'}${form.isPartPayment && form.balanceDue > 0 ? `, Due: ₹${form.balanceDue}` : ''}`;
+      const resp = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: 'claude-sonnet-4-20250514',
+          max_tokens: 150,
+          system: 'You are a hostel receipt assistant. Write one short professional receipt note in 1-2 sentences. Return only the note, no quotes.',
+          messages: [{ role: 'user', content: prompt }],
+        }),
+      });
+      const data = await resp.json();
+      const note = data.content?.[0]?.text;
+      if (note) setForm(p => ({ ...p, notes: note }));
+      else toast('Could not generate note', 'error');
+    } catch(_) { toast('Could not generate note', 'error'); }
+    finally { setAiNotesLoading(false); }
   };
 
   // ── Save receipt ──────────────────────────────────────────────────────────
@@ -548,7 +576,17 @@ export default function Receipts() {
 
                 <div className="form-group full">
                   <label>Notes</label>
-                  <input value={form.notes} onChange={e=>setForm(p=>({...p,notes:e.target.value}))} placeholder="Auto-filled for electric and final types" />
+                  <div style={{display:'flex',gap:6,alignItems:'center'}}>
+                    <input value={form.notes} onChange={e=>setForm(p=>({...p,notes:e.target.value}))} placeholder="Auto-filled for electric and final types" style={{flex:1}} />
+                    {/* F7: AI note generator — only show when room + amount are filled */}
+                    {form.roomNumber && form.totalAmount && (
+                      <button type="button" onClick={generateAINote} disabled={aiNotesLoading}
+                        title="Generate professional note using AI"
+                        style={{flexShrink:0,padding:'9px 12px',background:'linear-gradient(135deg,#667eea,#764ba2)',color:'white',border:'none',borderRadius:7,cursor:aiNotesLoading?'wait':'pointer',fontSize:'0.78rem',fontWeight:700,whiteSpace:'nowrap',opacity:aiNotesLoading?0.7:1}}>
+                        {aiNotesLoading ? '⏳' : '✨ Auto'}
+                      </button>
+                    )}
+                  </div>
                 </div>
               </div>
             </div>

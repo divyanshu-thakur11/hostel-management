@@ -12,10 +12,15 @@ export default function Electric() {
   const [showModal, setShowModal] = useState(false);
   const [lastReading, setLastReading] = useState(null);
   const [form, setForm] = useState({ month:'', year:'', startReading:'', endReading:'', ratePerUnit:8 });
+  const [prediction, setPrediction] = useState(null); // F4
   const toast = useToast();
 
   const load = () => electricAPI.getByRoom(selectedRoom).then(r => setReadings(r.data?.data || r.data || []));
-  useEffect(() => { load(); }, [selectedRoom]);
+  useEffect(() => {
+    load();
+    // F4: Fetch prediction non-blocking
+    electricAPI.predict?.(selectedRoom).then(r => setPrediction(r.data)).catch(() => setPrediction(null));
+  }, [selectedRoom]);
 
   const openModal = async () => {
     const now = new Date();
@@ -87,6 +92,14 @@ export default function Electric() {
                 <div style={{fontSize:'1.4rem',fontFamily:'Rajdhani',fontWeight:700,color:'var(--accent)'}}>{s.value}</div>
               </div>
             ))}
+            {/* F4: Predicted next bill card */}
+            {prediction?.predictedAmount != null && (
+              <div style={{background:'var(--bg3)',borderRadius:8,padding:'14px',border:'1px solid rgba(52,152,219,0.35)'}}>
+                <div style={{fontSize:'0.72rem',color:'var(--text3)',textTransform:'uppercase',letterSpacing:'0.08em',marginBottom:6}}>Predicted Next Bill</div>
+                <div style={{fontSize:'1.2rem',fontFamily:'Rajdhani',fontWeight:700,color:'var(--info)'}}>₹{prediction.predictedAmount}</div>
+                <div style={{fontSize:'0.68rem',color:'var(--text3)',marginTop:3}}>{prediction.predictedUnits} units · {prediction.confidence} confidence</div>
+              </div>
+            )}
           </div>
         )}
       </div>
@@ -109,7 +122,16 @@ export default function Electric() {
                   <td style={{fontWeight:500,color:'var(--text)'}}>{MONTHS[r.month-1]} {r.year}</td>
                   <td>{r.startReading}</td>
                   <td>{r.endReading}</td>
-                  <td style={{color:'var(--info)',fontWeight:600}}>{r.unitsConsumed} units</td>
+                  <td style={{color:'var(--info)',fontWeight:600}}>
+                    {r.unitsConsumed} units
+                    {/* F3: Anomaly badge */}
+                    {r.isAnomaly && (
+                      <span title="Unusually high — verify meter"
+                        style={{marginLeft:6,background:'rgba(231,76,60,0.15)',color:'var(--danger)',padding:'1px 7px',borderRadius:10,fontSize:'0.7rem',fontWeight:700,cursor:'help'}}>
+                        🚨 High
+                      </span>
+                    )}
+                  </td>
                   <td>₹{r.ratePerUnit}/unit</td>
                   <td style={{color:'var(--accent)',fontWeight:700,fontSize:'1rem'}}>₹{r.totalAmount}</td>
                   <td>

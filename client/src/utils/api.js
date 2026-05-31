@@ -79,12 +79,14 @@ export const receiptsAPI = {
   getNextNumbers: ()       => api.get('/receipts/next-numbers'),
   create:         (data)   => api.post('/receipts', data),
   delete:         (id)     => api.delete(`/receipts/${id}`),
+  query:          (data)   => api.post('/receipts/query', data),  // F8
 };
 
 export const electricAPI = {
   getAll:      (params) => api.get('/electric', { params }),
   getByRoom:   (n)      => api.get(`/electric/room/${n}`),
   getLastByRoom:(n)     => api.get(`/electric/room/${n}/last`),
+  predict:     (n)      => api.get(`/electric/room/${n}/predict`),
   create:      (data)   => api.post('/electric', data),
   update:      (id, d)  => api.put(`/electric/${id}`, d),
   delete:      (id)     => api.delete(`/electric/${id}`),

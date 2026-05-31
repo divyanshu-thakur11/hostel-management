@@ -80,7 +80,7 @@ exports.create = async (req, res, next) => {
     const hostelId = await getHostelId(req);
     if (!hostelId) { if (session) { try { await session.abortTransaction(); } catch(e2) {} } return res.status(400).json({ message: 'No hostel assigned. Contact owner.' }); }
 
-    const { name, mobileNo, aadharNumber, fathersName, fathersMobileNo, permanentAddress, fathersOccupation, roomNumber } = req.body;
+    const { name, mobileNo, aadharNumber, fathersName, fathersMobileNo, permanentAddress, fathersOccupation, roomNumber, forceSave } = req.body;
     const errors = validate.collect([
       validate.required(name, 'Name'),
       validate.required(mobileNo, 'Mobile number'),
@@ -94,6 +94,29 @@ exports.create = async (req, res, next) => {
       validate.aadhar(aadharNumber),
     ]);
     if (errors.length) { if (session) { try { await session.abortTransaction(); } catch(e2) {} } return res.status(400).json({ message: errors[0], errors }); }
+
+    // F2: Duplicate detection (skip if forceSave=true)
+    if (!forceSave) {
+      const lev = (a, b) => {
+        const m = a.length, n = b.length;
+        const dp = Array.from({ length: m+1 }, (_, i) => Array.from({ length: n+1 }, (_, j) => i === 0 ? j : j === 0 ? i : 0));
+        for (let i = 1; i <= m; i++) for (let j = 1; j <= n; j++)
+          dp[i][j] = a[i-1] === b[j-1] ? dp[i-1][j-1] : 1 + Math.min(dp[i-1][j], dp[i][j-1], dp[i-1][j-1]);
+        return dp[m][n];
+      };
+      const existing = await Member.find({ hostelId, isActive: { $ne: false } }).select('name mobileNo _id').lean();
+      const nameLower = (name || '').toLowerCase();
+      const mobileFirst8 = (mobileNo || '').replace(/\D/g,'').slice(0,8);
+      const dup = existing.find(m => {
+        const dist = lev(nameLower, (m.name||'').toLowerCase());
+        const mobileMatch = mobileFirst8 && (m.mobileNo||'').replace(/\D/g,'').slice(0,8) === mobileFirst8;
+        return dist <= 3 && mobileMatch;
+      });
+      if (dup) {
+        if (session) { try { await session.abortTransaction(); } catch(e2) {} }
+        return res.status(409).json({ duplicate: true, existingMember: dup });
+      }
+    }
 
     if (roomNumber) {
       const hostel = await Hostel.findById(hostelId);
@@ -220,7 +243,7 @@ exports.listArchived = async (req, res, next) => {
       query.$or = [
         { name: { $regex: req.query.search, $options: 'i' } },
         { mobileNo: { $regex: req.query.search } },
-        { roomNumber: isNaN(parseInt(req.query.search)) ? undefined : parseInt(req.query.search) },
+        { roomNumber: isNaN(parseInt(req.query.search)) ? undefined : parseInt(query.search) },
       ].filter(Boolean);
     }
     const [data, total] = await Promise.all([

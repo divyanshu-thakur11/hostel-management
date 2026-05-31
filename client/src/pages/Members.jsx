@@ -1,7 +1,8 @@
 import { useHostel } from '../context/HostelContext';
-import React, { useEffect, useState, useRef, useCallback } from 'react';
+import React, { useEffect, useState, useRef, useCallback, useMemo } from 'react';
 import { membersAPI, roomsAPI, whatsapp as wa } from '../utils/api';
 import { useToast } from '../context/ToastContext';
+import Fuse from 'fuse.js';
 
 const EMPTY = {
   name:'', mobileNo:'', fathersName:'', fathersMobileNo:'', aadharNumber:'',
@@ -68,13 +69,15 @@ export default function Members() {
   const printRulesRef  = useRef();
   const toast = useToast();
 
+  const [allMembers, setAllMembers] = useState([]); // full list for client fuzzy search
+
   const loadActive = useCallback((p = 1, s = search, r = roomFilter) => {
-    const params = { page: p, limit: PAGE_SIZE };
-    if (s) params.search = s;
+    const params = { page: 1, limit: 500 }; // load all for fuzzy
     if (r) params.room = r;
     membersAPI.getAll(params).then(res => {
-      setMembers(res.data?.data || []);
-      setTotal(res.data?.total || 0);
+      const data = res.data?.data || [];
+      setAllMembers(data);
+      setTotal(res.data?.total || data.length);
     });
   }, [search, roomFilter]);
 
@@ -89,6 +92,25 @@ export default function Members() {
 
   useEffect(() => { loadActive(1); }, [hostelSwitchCount]);
   useEffect(() => { loadArchived(1); }, []);
+
+  // F1: Fuzzy search on client-side loaded members
+  const fuzzyMembers = useMemo(() => {
+    if (!search.trim()) return allMembers;
+    const fuse = new Fuse(allMembers, {
+      keys: ['name', 'mobileNo', 'aadharNumber', 'fathersName'],
+      threshold: 0.35,
+      ignoreLocation: true,
+    });
+    return fuse.search(search).map(r => r.item);
+  }, [allMembers, search]);
+
+  // Paginate fuzzy results
+  const members = useMemo(() => {
+    const start = (page - 1) * PAGE_SIZE;
+    return fuzzyMembers.slice(start, start + PAGE_SIZE);
+  }, [fuzzyMembers, page]);
+
+  const computedTotal = search ? fuzzyMembers.length : total;
 
   const handleSearch = (val) => {
     setSearch(val); setPage(1); setArchivedPage(1);
@@ -122,7 +144,25 @@ export default function Members() {
       toast(editing ? 'Member updated' : 'Member registered');
       setShowModal(false);
       loadActive(page);
-    } catch(e) { toast(e.response?.data?.message || 'Error saving member', 'error'); }
+    } catch(e) {
+      // F2: Handle duplicate detection
+      if (e.response?.status === 409 && e.response?.data?.duplicate) {
+        const dup = e.response.data.existingMember;
+        const confirm = window.confirm(
+          `⚠️ Possible duplicate detected!\n\nExisting member: "${dup.name}" (${dup.mobileNo})\n\nDo you want to register anyway?`
+        );
+        if (confirm) {
+          try {
+            await membersAPI.create({ ...form, forceSave: true });
+            toast('Member registered (duplicate override)');
+            setShowModal(false);
+            loadActive(page);
+          } catch(e2) { toast(e2.response?.data?.message || 'Error saving member', 'error'); }
+        }
+      } else {
+        toast(e.response?.data?.message || 'Error saving member', 'error');
+      }
+    }
     finally { setSaving(false); }
   };
 
@@ -169,7 +209,7 @@ export default function Members() {
     setTimeout(() => w.print(), 500);
   };
 
-  const totalPages = Math.ceil(total / PAGE_SIZE);
+  const totalPages = Math.ceil(computedTotal / PAGE_SIZE);
   const archivedTotalPages = Math.ceil(archivedTotal / PAGE_SIZE);
   const inputStyle = { width:'100%', background:'var(--bg3)', border:'1px solid var(--border)', borderRadius:6, padding:'9px 12px', color:'var(--text)', outline:'none', fontSize:'0.88rem' };
 

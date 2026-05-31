@@ -1,7 +1,25 @@
 import { useHostel } from '../context/HostelContext';
 import React, { useEffect, useState } from 'react';
 import { membersAPI, roomsAPI, whatsapp as wa } from '../utils/api';
+import api from '../utils/api';
 import { useToast } from '../context/ToastContext';
+
+// F6: Payment risk score badge — lazy, non-blocking
+function RiskBadge({ memberId }) {
+  const [risk, setRisk] = useState(null);
+  useEffect(() => {
+    if (!memberId) return;
+    api.get(`/members/${memberId}/payment-score`).then(r => setRisk(r.data)).catch(() => {});
+  }, [memberId]);
+  if (!risk) return null;
+  const emoji = risk.risk === 'low' ? '🟢' : risk.risk === 'medium' ? '🟡' : '🔴';
+  return (
+    <span title={`Payment Risk: ${risk.risk} | Score: ${risk.score}/100 | Last payment: ${risk.lastPaymentDays === 999 ? 'never' : risk.lastPaymentDays + ' days ago'} | Part payments: ${risk.partPaymentCount}`}
+      style={{marginLeft:5,cursor:'help',fontSize:'0.85rem',display:'inline'}}>
+      {emoji}
+    </span>
+  );
+}
 
 export default function RoomDetails() {
   const { hostelSwitchCount } = useHostel();
@@ -91,7 +109,7 @@ export default function RoomDetails() {
               : 0;
             return (
             <tr key={m._id}>
-              <td style={{color:'var(--text)',fontWeight:500}}>{m.name}</td>
+              <td style={{color:'var(--text)',fontWeight:500}}>{m.name}<RiskBadge memberId={m._id} /></td>
               <td style={{fontSize:'0.82rem'}}>{m.mobileNo || '—'}</td>
               <td>{m.roomNumber ? <span className="badge badge-blue">Room {m.roomNumber}</span> : '—'}</td>
               <td>₹{m.rent||0}</td>

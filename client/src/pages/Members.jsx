@@ -46,7 +46,6 @@ const PAGE_SIZE = 20;
 
 export default function Members() {
   const { hostelSwitchCount } = useHostel();
-  const [members, setMembers]   = useState([]);
   const [archived, setArchived] = useState([]);
   const [total, setTotal]       = useState(0);
   const [archivedTotal, setArchivedTotal] = useState(0);
@@ -69,7 +68,7 @@ export default function Members() {
   const printRulesRef  = useRef();
   const toast = useToast();
 
-  const [allMembers, setAllMembers] = useState([]); // full list for client fuzzy search
+  const [allMembers, setAllMembers] = useState([]); // full list for fuzzy search
 
   const loadActive = useCallback((p = 1, s = search, r = roomFilter) => {
     const params = { page: 1, limit: 500 }; // load all for fuzzy

@@ -79,7 +79,8 @@ export const receiptsAPI = {
   getNextNumbers: ()       => api.get('/receipts/next-numbers'),
   create:         (data)   => api.post('/receipts', data),
   delete:         (id)     => api.delete(`/receipts/${id}`),
-  query:          (data)   => api.post('/receipts/query', data),  // F8
+  query:          (data)   => api.post('/receipts/query', data),
+  nlQuery:        (query)  => api.post('/receipts/nl-query', { query }), // F8
 };
 
 export const electricAPI = {

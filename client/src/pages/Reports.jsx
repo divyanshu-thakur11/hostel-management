@@ -299,37 +299,23 @@ export default function Reports() {
       `receipts-${new Date().toISOString().split('T')[0]}.csv`, 'text/csv');
   };
 
-  // F8: Natural language query via Anthropic API
+  // F8: Natural language query — Anthropic is called server-side
   const handleNLQuery = async (e) => {
     e.preventDefault();
     if (!nlQuery.trim()) return;
     setNlLoading(true); setNlResults(null); setNlError('');
     try {
-      const hostelId = localStorage.getItem('hm_hostel_id') || '';
-      const resp = await fetch('https://api.anthropic.com/v1/messages', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          model: 'claude-sonnet-4-20250514',
-          max_tokens: 500,
-          system: `You are a MongoDB aggregation assistant for a hostel management system.
-Collections:
-- receipts (hostelId, memberName, roomNumber, amount, amountPaid, totalAmount, packageName, isPartPayment, balanceDue, receiptDate, modeOfPayment, billNumber)
-- members (hostelId, name, roomNumber, mobileNo, isActive, rent, advance, admissionDate, roomLeavingDate)
-Return ONLY valid JSON with no markdown: { "collection": "receipts"|"members", "pipeline": [...stages] }
-Do NOT include $match on hostelId — it is injected server-side.
-Keep pipeline simple. Limit results to 20.`,
-          messages: [{ role: 'user', content: `hostelId: ${hostelId}\nQuery: ${nlQuery}` }],
-        }),
-      });
-      const data = await resp.json();
-      const raw  = data.content?.[0]?.text?.trim();
-      if (!raw) throw new Error('Empty response');
-      const parsed = JSON.parse(raw.replace(/```json|```/g, '').trim());
-      const results = await receiptsAPI.query(parsed);
-      setNlResults({ data: results.data || results, query: nlQuery });
+      const resp = await receiptsAPI.nlQuery(nlQuery);
+      const results = resp.data?.results ?? resp.data;
+      if (!Array.isArray(results)) throw new Error('Unexpected response shape');
+      setNlResults({ data: results, query: nlQuery });
     } catch(err) {
-      setNlError('Could not process query. Try rephrasing.');
+      const msg = err.response?.data?.message || err.message || '';
+      if (msg.includes('ANTHROPIC_API_KEY')) {
+        setNlError('ANTHROPIC_API_KEY is not set on the server. Add it in Render → Environment.');
+      } else {
+        setNlError('Could not process query. Try rephrasing.');
+      }
     } finally { setNlLoading(false); }
   };
 

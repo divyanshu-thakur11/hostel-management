@@ -51,12 +51,24 @@ function callAnthropic(systemPrompt, userMessage) {
       let data = '';
       res.on('data', chunk => data += chunk);
       res.on('end', () => {
-        try { resolve(JSON.parse(data)); }
-        catch(e) { reject(new Error('Invalid JSON from Anthropic')); }
+        let parsed;
+        try { parsed = JSON.parse(data); }
+        catch(e) { return reject(new Error('Invalid JSON from Anthropic: ' + data.slice(0, 200))); }
+
+        // Anthropic error response (auth failure, rate limit, etc.)
+        if (parsed.type === 'error' || parsed.error) {
+          const msg = parsed.error?.message || parsed.error?.type || JSON.stringify(parsed.error);
+          return reject(new Error('Anthropic API error: ' + msg));
+        }
+        // HTTP-level error status
+        if (res.statusCode >= 400) {
+          return reject(new Error(`Anthropic HTTP ${res.statusCode}: ${data.slice(0, 200)}`));
+        }
+        resolve(parsed);
       });
     });
     req.on('error', reject);
-    req.setTimeout(15000, () => { req.destroy(); reject(new Error('Anthropic timeout')); });
+    req.setTimeout(20000, () => { req.destroy(); reject(new Error('Anthropic request timed out')); });
     req.write(body);
     req.end();
   });
@@ -89,8 +101,12 @@ Q: show members without police verification
 A: {"collection":"members","pipeline":[{"$match":{"policeFormVerified":{"$ne":true},"isActive":{"$ne":false}}},{"$project":{"name":1,"roomNumber":1,"mobileNo":1,"admissionDate":1}},{"$limit":20}]}`;
 
     const aiResp = await callAnthropic(system, query);
-    const raw    = aiResp.content?.[0]?.text?.trim();
-    if (!raw) return res.status(502).json({ message: 'Empty response from AI' });
+    console.log('Anthropic response type:', aiResp.type, '| content blocks:', aiResp.content?.length);
+    const raw = aiResp.content?.[0]?.text?.trim();
+    if (!raw) {
+      console.error('Anthropic full response:', JSON.stringify(aiResp).slice(0, 500));
+      return res.status(502).json({ message: 'Empty response from AI — check Render logs for details' });
+    }
 
     let parsed;
     try {

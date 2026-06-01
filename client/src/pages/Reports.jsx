@@ -305,14 +305,17 @@ export default function Reports() {
     if (!nlQuery.trim()) return;
     setNlLoading(true); setNlResults(null); setNlError('');
     try {
-      const resp = await receiptsAPI.nlQuery(nlQuery);
+      const resp    = await receiptsAPI.nlQuery(nlQuery);
       const results = resp.data?.results ?? resp.data;
       if (!Array.isArray(results)) throw new Error('Unexpected response shape');
       setNlResults({ data: results, query: nlQuery });
     } catch(err) {
-      const msg = err.response?.data?.message || err.message || '';
-      if (msg.includes('ANTHROPIC_API_KEY')) {
+      const serverMsg = err.response?.data?.message || '';
+      if (serverMsg.includes('ANTHROPIC_API_KEY')) {
         setNlError('ANTHROPIC_API_KEY is not set on the server. Add it in Render → Environment.');
+      } else if (serverMsg) {
+        // Show real server error so you can debug
+        setNlError(`Server: ${serverMsg}`);
       } else {
         setNlError('Could not process query. Try rephrasing.');
       }

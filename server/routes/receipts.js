@@ -108,13 +108,21 @@ A: {"collection":"members","pipeline":[{"$match":{"policeFormVerified":{"$ne":tr
     if (BLOCKED_STAGES.some(s => pipeStr.includes(s)))
       return res.status(400).json({ message: 'Blocked pipeline stage detected' });
 
-    const Model   = collection === 'receipts' ? require('../models/Receipt') : require('../models/Member');
+    const Model    = collection === 'receipts' ? require('../models/Receipt') : require('../models/Member');
     const hostelId = await getHostelId(req);
+
+    // Safe ObjectId casting — hostelId might already be an ObjectId or a string
+    let hostelOid;
+    try {
+      hostelOid = mongoose.Types.ObjectId.isValid(String(hostelId))
+        ? new mongoose.Types.ObjectId(String(hostelId))
+        : hostelId;
+    } catch(_) { hostelOid = hostelId; }
+
     const safePipeline = [
-      { $match: { hostelId: new (require('mongoose').Types.ObjectId)(String(hostelId)) } },
+      { $match: { hostelId: hostelOid } },
       ...pipeline,
     ];
-    // Ensure $limit exists somewhere in pipeline
     const hasLimit = pipeline.some(s => s.$limit);
     if (!hasLimit) safePipeline.push({ $limit: 20 });
 
@@ -134,10 +142,16 @@ router.post('/query', async (req, res) => {
     if (!Array.isArray(pipeline)) return res.status(400).json({ message: 'Invalid pipeline' });
     const pipeStr = JSON.stringify(pipeline);
     if (BLOCKED_STAGES.some(s => pipeStr.includes(s))) return res.status(400).json({ message: 'Blocked pipeline stage' });
-    const Model   = collection === 'receipts' ? require('../models/Receipt') : require('../models/Member');
+    const Model    = collection === 'receipts' ? require('../models/Receipt') : require('../models/Member');
     const hostelId = await getHostelId(req);
+    let hostelOid;
+    try {
+      hostelOid = mongoose.Types.ObjectId.isValid(String(hostelId))
+        ? new mongoose.Types.ObjectId(String(hostelId))
+        : hostelId;
+    } catch(_) { hostelOid = hostelId; }
     const safePipeline = [
-      { $match: { hostelId: new (require('mongoose').Types.ObjectId)(String(hostelId)) } },
+      { $match: { hostelId: hostelOid } },
       ...pipeline,
       { $limit: 100 },
     ];

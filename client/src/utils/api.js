@@ -80,7 +80,8 @@ export const receiptsAPI = {
   create:         (data)   => api.post('/receipts', data),
   delete:         (id)     => api.delete(`/receipts/${id}`),
   query:          (data)   => api.post('/receipts/query', data),
-  nlQuery:        (query)  => api.post('/receipts/nl-query', { query }), // F8
+  nlQuery:        (query)  => api.post('/receipts/nl-query', { query }),
+  generateNote:   (data)   => api.post('/receipts/generate-note', data), // F7
 };
 
 export const electricAPI = {

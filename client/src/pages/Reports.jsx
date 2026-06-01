@@ -1,902 +1,728 @@
 import { useHostel } from '../context/HostelContext';
-import React, { useEffect, useState, useMemo } from 'react';
-import { membersAPI, receiptsAPI, electricAPI, salaryAPI, backupAPI } from '../utils/api';
-import {
-  BarChart, Bar, LineChart, Line, AreaChart, Area,
-  PieChart, Pie, Cell, ComposedChart, XAxis, YAxis,
-  CartesianGrid, Tooltip, Legend, ResponsiveContainer, ReferenceLine,
-} from 'recharts';
+import React, { useEffect, useState, useRef, useCallback } from 'react';
+import { membersAPI, receiptsAPI, roomsAPI, electricAPI, whatsapp } from '../utils/api';
+import { useToast } from '../context/ToastContext';
 
-/* ── Constants ─────────────────────────────────────────────────────────────── */
-const C = {
-  gold:   '#f0a500', green:  '#2ecc71', blue:   '#3498db',
-  purple: '#9b59b6', red:    '#e74c3c', teal:   '#1abc9c',
-  orange: '#e67e22', pink:   '#e91e8c',
-};
-const PIE_COLORS = Object.values(C);
-const fmt  = (n) => Number(n || 0).toLocaleString('en-IN');
-const fmtK = (v) => v >= 100000 ? `₹${(v/100000).toFixed(1)}L` : v >= 1000 ? `₹${Math.round(v/1000)}k` : `₹${v}`;
+function numberToWords(num) {
+  const a = ['','One','Two','Three','Four','Five','Six','Seven','Eight','Nine','Ten','Eleven','Twelve','Thirteen','Fourteen','Fifteen','Sixteen','Seventeen','Eighteen','Nineteen'];
+  const b = ['','','Twenty','Thirty','Forty','Fifty','Sixty','Seventy','Eighty','Ninety'];
+  if (!num || num === 0) return 'Zero';
+  let n = Math.floor(num), w = '';
+  if (Math.floor(n/100000)>0){w+=numberToWords(Math.floor(n/100000))+' Lakh ';n%=100000;}
+  if (Math.floor(n/1000)>0){w+=numberToWords(Math.floor(n/1000))+' Thousand ';n%=1000;}
+  if (Math.floor(n/100)>0){w+=numberToWords(Math.floor(n/100))+' Hundred ';n%=100;}
+  if (n>0){if(n<20)w+=a[n];else w+=b[Math.floor(n/10)]+(n%10?' '+a[n%10]:'');}
+  return w.trim();
+}
 
-/* ── Reusable tooltip ──────────────────────────────────────────────────────── */
-const CT = ({ active, payload, label }) => {
-  if (!active || !payload?.length) return null;
-  return (
-    <div style={{background:'var(--bg2)',border:'1px solid var(--border2)',borderRadius:10,padding:'10px 14px',fontSize:'0.8rem',boxShadow:'0 8px 24px rgba(0,0,0,0.4)',minWidth:140}}>
-      {label && <div style={{color:'var(--text3)',marginBottom:8,fontSize:'0.72rem',textTransform:'uppercase',letterSpacing:'0.06em'}}>{label}</div>}
-      {payload.map((p,i) => (
-        <div key={i} style={{display:'flex',justifyContent:'space-between',gap:16,color:p.color||'var(--text2)',padding:'2px 0'}}>
-          <span>{p.name}</span>
-          <span style={{fontWeight:700,fontFamily:'Rajdhani'}}>
-            {typeof p.value === 'number' && p.name?.toLowerCase().includes('rate') ? `${p.value}%` : typeof p.value === 'number' ? `₹${fmt(p.value)}` : p.value}
-          </span>
-        </div>
-      ))}
-    </div>
-  );
+const PKG = { rent:'Rent / किराया', advance:'Advance / एडवांस', electric:'Electric / बिजली', final:'Final Bill / अंतिम', other:'Other / अन्य' };
+const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+
+const EMPTY = {
+  receiptNumber:'', billNumber:'', billYear:'', billSerial:'',
+  roomNumber:'', memberMode:'all', memberName:'', memberMobile:'', memberId:'',
+  packageName:'rent', fromDate:'', toDate:'', billingMonth:'',
+  totalAmount:'', amountPaid:'', balanceDue:'0', isPartPayment:false,
+  modeOfPayment:'cash', notes:'',
+  receiptDate: new Date().toISOString().split('T')[0],
 };
 
-/* ── Insight badge ─────────────────────────────────────────────────────────── */
-const Insight = ({ icon, text, color = C.gold }) => (
-  <div style={{display:'flex',alignItems:'flex-start',gap:8,padding:'8px 12px',background:`${color}11`,border:`1px solid ${color}33`,borderRadius:8,fontSize:'0.78rem',color:'var(--text2)'}}>
-    <span style={{fontSize:'1rem',flexShrink:0}}>{icon}</span>
-    <span dangerouslySetInnerHTML={{__html:text}} />
-  </div>
-);
+const selStyle = { background:'var(--bg3)', border:'1px solid var(--border)', borderRadius:6, padding:'8px 10px', color:'var(--text)', outline:'none', fontSize:'0.88rem' };
 
-/* ── Section header ────────────────────────────────────────────────────────── */
-const SH = ({ title, sub }) => (
-  <div style={{marginBottom:12}}>
-    <div style={{fontFamily:'Rajdhani',fontSize:'0.95rem',fontWeight:700,color:'var(--text)',textTransform:'uppercase',letterSpacing:'0.06em'}}>{title}</div>
-    {sub && <div style={{fontSize:'0.72rem',color:'var(--text3)',marginTop:2}}>{sub}</div>}
-  </div>
-);
+export default function Receipts() {
+  const [receipts, setReceipts]     = useState([]);
+  const [total, setTotal]           = useState(0);
+  const [pages, setPages]           = useState(1);
+  const [page, setPage]             = useState(1);
+  const [members, setMembers]       = useState([]);
+  const [roomMembers, setRoomMembers] = useState([]);
+  const [roomConfig, setRoomConfig] = useState(null);
+  const [showModal, setShowModal]   = useState(false);
+  const [showPrint, setShowPrint]   = useState(null);
+  const [form, setForm]             = useState(EMPTY);
+  const [dueModal, setDueModal]     = useState(null);   // part-pay receipt to make due receipt for
+  const [dueForm, setDueForm]       = useState({ modeOfPayment:'cash', receiptDate:'', notes:'' });
+  const [aiNotesLoading, setAiNotesLoading] = useState(false); // F7
+  const [loading, setLoading]       = useState(false);
+  const [search, setSearch]         = useState('');
+  const [roomF, setRoomF]           = useState('');
+  const [typeF, setTypeF]           = useState('');
+  const [modeF, setModeF]           = useState('');
+  const [fromF, setFromF]           = useState('');
+  const [toF, setToF]               = useState('');
+  const printRef = useRef();
+  const toast = useToast();
 
-/* ══════════════════════════════════════════════════════════════════════════════
-   MAIN COMPONENT
-══════════════════════════════════════════════════════════════════════════════ */
-export default function Reports() {
+  // Load receipts with filters
   const { hostelSwitchCount } = useHostel();
-  const [members,  setMembers]  = useState([]);
-  const [receipts, setReceipts] = useState([]);
-  const [electric, setElectric] = useState([]);
-  const [salary,   setSalary]   = useState([]);
-  const [tab,      setTab]      = useState('overview');
-  const [filters,  setFilters]  = useState({ room:'', mode:'', type:'', search:'', from:'', to:'', partPay:'' });
-  const [loading,  setLoading]  = useState(true);
-  const [exporting,setExporting]= useState('');
-  // F8: Natural language query
-  const [nlQuery,    setNlQuery]    = useState('');
-  const [nlLoading,  setNlLoading]  = useState(false);
-  const [nlResults,  setNlResults]  = useState(null);
-  const [nlError,    setNlError]    = useState('');
-
-  useEffect(() => {
+  const loadReceipts = useCallback((p = 1) => {
     setLoading(true);
-    Promise.all([
-      membersAPI.getAll({ limit: 1000 }),
-      receiptsAPI.getAll({ limit: 2000 }),
-      electricAPI.getAll(),
-      salaryAPI.getAll(),
-    ]).then(([m,r,e,s]) => {
-      setMembers(m.data?.data  || m.data || []);
-      setReceipts(r.data?.data || r.data || []);
-      setElectric(e.data?.data || e.data || []);
-      setSalary(s.data?.data   || s.data || []);
-      setLoading(false);
-    }).catch(() => setLoading(false));
+    const params = { page: p, limit: 30 };
+    if (search) params.search = search;
+    if (roomF)  params.room   = roomF;
+    if (typeF)  params.type   = typeF;
+    if (modeF)  params.mode   = modeF;
+    if (fromF)  params.from   = fromF;
+    if (toF)    params.to     = toF;
+    receiptsAPI.getAll(params)
+      .then(r => {
+        const d = r.data;
+        setReceipts(Array.isArray(d) ? d : (d?.data || []));
+        setTotal(d?.total || 0);
+        setPages(d?.pages || 1);
+        setPage(p);
+      })
+      .catch(() => toast('Failed to load receipts', 'error'))
+      .finally(() => setLoading(false));
+  }, [search, roomF, typeF, modeF, fromF, toF]);
+
+  useEffect(() => { loadReceipts(1); }, [loadReceipts]);
+  useEffect(() => {
+    membersAPI.getAll({ limit: 500 }).then(r => setMembers(r.data?.data || r.data || []));
   }, [hostelSwitchCount]);
 
-  /* ── Base numbers ── */
-  const activeMembers  = members.filter(m => m.isActive !== false && m.roomNumber);
-  const totalIncome    = receipts.reduce((s,r) => s + (r.amountPaid || r.totalAmount || 0), 0);
-  const cashTotal      = receipts.filter(r=>r.modeOfPayment==='cash').reduce((s,r)=>s+(r.amountPaid||r.totalAmount||0),0);
-  const onlineTotal    = receipts.filter(r=>r.modeOfPayment==='online').reduce((s,r)=>s+(r.amountPaid||r.totalAmount||0),0);
-  const totalSalary    = salary.reduce((s,r)=>s+(r.netSalary||0),0);
-  const totalMaint     = salary.reduce((s,r)=>s+(r.maintenanceCosts||[]).reduce((a,c)=>a+(c.amount||0),0),0);
-  const totalExpend    = totalSalary + totalMaint;
-  const netBalance     = totalIncome - totalExpend;
-  const totalDues      = receipts.filter(r=>r.isPartPayment&&(r.balanceDue||0)>0).reduce((s,r)=>s+(r.balanceDue||0),0);
-  const maxRooms       = Math.max(...members.filter(m=>m.roomNumber).map(m=>m.roomNumber), 20);
+  const uniqueRooms = [...new Set(
+    members.filter(m => m.roomNumber && m.isActive !== false).map(m => m.roomNumber)
+  )].sort((a,b) => a-b);
 
-  /* ── Monthly data (12 months) ── */
-  const monthlyData = useMemo(() => {
-    const map = {};
-    receipts.forEach(r => {
-      const d   = new Date(r.receiptDate);
-      const key = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
-      const lbl = d.toLocaleString('en-IN', { month:'short', year:'2-digit' });
-      if (!map[key]) map[key] = { key, label:lbl, income:0, rent:0, electric:0, advance:0, other:0, count:0, cash:0, online:0 };
-      const amt = r.amountPaid || r.totalAmount || 0;
-      map[key].income   += amt;
-      map[key].rent     += r.rent     || 0;
-      map[key].electric += r.electric || 0;
-      map[key].advance  += r.advance  || 0;
-      map[key].other    += r.other    || 0;
-      map[key].count    += 1;
-      if (r.modeOfPayment === 'cash')   map[key].cash   += amt;
-      if (r.modeOfPayment === 'online') map[key].online += amt;
-    });
-    return Object.values(map).sort((a,b)=>a.key.localeCompare(b.key)).slice(-12);
-  }, [receipts]);
+  // ── When room is selected ─────────────────────────────────────────────────
+  const handleRoomChange = async (roomNo) => {
+    const rm = members.filter(m => String(m.roomNumber) === String(roomNo) && m.isActive !== false);
+    setRoomMembers(rm);
+    setRoomConfig(null);
 
-  /* ── Room revenue ranking ── */
-  const roomRevenue = useMemo(() => {
-    const map = {};
-    receipts.forEach(r => {
-      if (!r.roomNumber) return;
-      if (!map[r.roomNumber]) map[r.roomNumber] = { room: r.roomNumber, total:0, rent:0, electric:0, count:0 };
-      map[r.roomNumber].total    += r.amountPaid || r.totalAmount || 0;
-      map[r.roomNumber].rent     += r.rent     || 0;
-      map[r.roomNumber].electric += r.electric || 0;
-      map[r.roomNumber].count    += 1;
-    });
-    return Object.values(map).sort((a,b)=>b.total-a.total).slice(0,10).map(r=>({...r,label:`R${r.room}`}));
-  }, [receipts]);
+    // Auto-fill from date based on last receipt for this room
+    const roomReceipts = receipts
+      .filter(r => String(r.roomNumber) === String(roomNo) && r.toDate)
+      .sort((a,b) => new Date(b.toDate) - new Date(a.toDate));
+    const lastToDate = roomReceipts[0]?.toDate;
+    const fromDate = lastToDate
+      ? new Date(new Date(lastToDate).getTime() + 86400000).toISOString().split('T')[0]
+      : (rm[0]?.roomJoinDate ? new Date(rm[0].roomJoinDate).toISOString().split('T')[0] : '');
 
-  /* ── Day-of-week payment pattern ── */
-  const dowData = useMemo(() => {
-    const days = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
-    const map  = Object.fromEntries(days.map(d=>[d,{day:d,count:0,amount:0}]));
-    receipts.forEach(r => {
-      const d = days[new Date(r.receiptDate).getDay()];
-      map[d].count  += 1;
-      map[d].amount += r.amountPaid || r.totalAmount || 0;
-    });
-    return days.map(d=>map[d]);
-  }, [receipts]);
+    // Set billing month to current month
+    const now = new Date();
+    const billingMonth = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`;
 
-  /* ── Monthly collection rate (% members who paid that month) ── */
-  const collectionRate = useMemo(() => {
-    return monthlyData.map(m => {
-      const paidRooms = new Set(receipts.filter(r => {
-        const d = new Date(r.receiptDate);
-        return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}` === m.key;
-      }).map(r => r.roomNumber)).size;
-      const totalRooms = activeMembers.length > 0 ? Math.max(1, new Set(activeMembers.map(m=>m.roomNumber)).size) : 1;
-      return { ...m, rate: Math.min(100, Math.round((paidRooms / totalRooms) * 100)) };
-    });
-  }, [monthlyData, receipts, activeMembers]);
+    setForm(p => ({ ...p, roomNumber: roomNo, fromDate, billingMonth, memberName:'', memberMobile:'', memberId:'', totalAmount:'' }));
 
-  /* ── Electric consumption per room ── */
-  const elecByRoom = useMemo(() => {
-    const map = {};
-    electric.forEach(e => {
-      if (!map[e.roomNumber]) map[e.roomNumber] = { room:e.roomNumber, units:0, amount:0, readings:0 };
-      map[e.roomNumber].units    += (e.endReading - e.startReading) || e.unitsConsumed || 0;
-      map[e.roomNumber].amount   += e.totalAmount || 0;
-      map[e.roomNumber].readings += 1;
-    });
-    return Object.values(map).sort((a,b)=>b.units-a.units).slice(0,10).map(r=>({...r,label:`R${r.room}`}));
-  }, [electric]);
-
-  /* ── Tenure distribution (how long members stay) ── */
-  const tenureData = useMemo(() => {
-    const buckets = {'<1 mo':0,'1-3 mo':0,'3-6 mo':0,'6-12 mo':0,'>1 yr':0};
-    members.forEach(m => {
-      const join  = m.roomJoinDate ? new Date(m.roomJoinDate) : null;
-      const leave = m.roomLeavingDate ? new Date(m.roomLeavingDate) : new Date();
-      if (!join) return;
-      const months = (leave - join) / (1000*60*60*24*30);
-      if      (months < 1)  buckets['<1 mo']++;
-      else if (months < 3)  buckets['1-3 mo']++;
-      else if (months < 6)  buckets['3-6 mo']++;
-      else if (months < 12) buckets['6-12 mo']++;
-      else                  buckets['>1 yr']++;
-    });
-    return Object.entries(buckets).map(([name,value])=>({name,value})).filter(x=>x.value>0);
-  }, [members]);
-
-  /* ── Income vs Expenditure with net ── */
-  const incomeVsExpend = useMemo(() => {
-    return monthlyData.map(m => {
-      const salaryForMonth = salary.filter(s => {
-        const d = new Date(s.salaryDate || s.createdAt);
-        return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}` === m.key;
-      }).reduce((sum,s) => sum + (s.netSalary||0) + (s.maintenanceCosts||[]).reduce((a,c)=>a+(c.amount||0),0), 0);
-      return { ...m, expend: salaryForMonth, net: m.income - salaryForMonth };
-    });
-  }, [monthlyData, salary]);
-
-  /* ── Payment mode trend ── */
-  const modeTrend = useMemo(() => monthlyData.map(m => ({
-    label: m.label,
-    cashPct:   m.income > 0 ? Math.round(m.cash/m.income*100)   : 0,
-    onlinePct: m.income > 0 ? Math.round(m.online/m.income*100) : 0,
-  })), [monthlyData]);
-
-  /* ── Insights engine ── */
-  const insights = useMemo(() => {
-    const ins = [];
-    if (monthlyData.length >= 2) {
-      const last  = monthlyData[monthlyData.length-1];
-      const prev  = monthlyData[monthlyData.length-2];
-      const delta = last.income - prev.income;
-      const pct   = prev.income > 0 ? Math.round(Math.abs(delta)/prev.income*100) : 0;
-      if (delta > 0) ins.push({ icon:'📈', text:`Revenue <strong>up ${pct}%</strong> this month (₹${fmt(delta)} more than last month)`, color:C.green });
-      if (delta < 0) ins.push({ icon:'📉', text:`Revenue <strong>down ${pct}%</strong> this month (₹${fmt(Math.abs(delta))} less than last month)`, color:C.red });
-    }
-    // Best month
-    if (monthlyData.length > 0) {
-      const best = [...monthlyData].sort((a,b)=>b.income-a.income)[0];
-      ins.push({ icon:'🏆', text:`Best month: <strong>${best.label}</strong> with ₹${fmt(best.income)} income`, color:C.gold });
-    }
-    // Online adoption
-    if (totalIncome > 0) {
-      const onlinePct = Math.round(onlineTotal/totalIncome*100);
-      if (onlinePct >= 60) ins.push({ icon:'📱', text:`<strong>${onlinePct}%</strong> payments are online — excellent digital adoption`, color:C.teal });
-      else if (onlinePct <= 30) ins.push({ icon:'💵', text:`Only <strong>${onlinePct}%</strong> online payments — consider encouraging UPI/online`, color:C.orange });
-    }
-    // Dues warning
-    if (totalDues > 0) {
-      ins.push({ icon:'⚠️', text:`₹${fmt(totalDues)} in <strong>pending dues</strong> from part payments — follow up needed`, color:C.red });
-    }
-    // Police verification gap
-    const unverified = members.filter(m=>m.isActive!==false&&!m.policeFormVerified).length;
-    if (unverified > 0) ins.push({ icon:'🚔', text:`<strong>${unverified} member${unverified>1?'s':''}</strong> without police verification — compliance risk`, color:C.orange });
-    // Top paying day
-    if (dowData.length > 0) {
-      const topDay = [...dowData].sort((a,b)=>b.amount-a.amount)[0];
-      if (topDay.count > 0) ins.push({ icon:'📅', text:`Most payments happen on <strong>${topDay.day}</strong> — schedule follow-ups accordingly`, color:C.blue });
-    }
-    // Low occupancy months
-    const lowMonths = collectionRate.filter(m=>m.rate < 60 && m.count > 0);
-    if (lowMonths.length > 0) ins.push({ icon:'🔍', text:`Low collection rate in <strong>${lowMonths.map(m=>m.label).join(', ')}</strong> — may indicate payment delays`, color:C.purple });
-    // High electric rooms
-    if (elecByRoom.length > 0) {
-      const highElec = elecByRoom[0];
-      ins.push({ icon:'⚡', text:`Room <strong>${highElec.room}</strong> is highest electricity consumer (${highElec.units} units) — check for excess usage`, color:C.orange });
-    }
-    // Long tenure members
-    const longStay = members.filter(m => {
-      if (!m.roomJoinDate || m.isActive===false) return false;
-      return (new Date() - new Date(m.roomJoinDate)) > 365*24*60*60*1000;
-    });
-    if (longStay.length > 0) ins.push({ icon:'🌟', text:`<strong>${longStay.length} loyal member${longStay.length>1?'s':''}</strong> staying 1+ year — consider loyalty benefit`, color:C.green });
-    // Net margin
-    if (totalIncome > 0 && totalExpend > 0) {
-      const margin = Math.round((netBalance/totalIncome)*100);
-      ins.push({ icon:'💹', text:`Net margin: <strong>${margin}%</strong> (₹${fmt(netBalance)} of ₹${fmt(totalIncome)} income kept after expenses)`, color: margin>=60?C.green:margin>=30?C.gold:C.red });
-    }
-    return ins;
-  }, [monthlyData, totalIncome, onlineTotal, totalDues, members, dowData, collectionRate, elecByRoom, netBalance, totalExpend]);
-
-  /* ── Filtered receipts (payments tab) ── */
-  const filteredReceipts = useMemo(() => receipts.filter(r =>
-    (!filters.room   || String(r.roomNumber)===filters.room) &&
-    (!filters.mode   || r.modeOfPayment===filters.mode) &&
-    (!filters.type   || r.packageName===filters.type) &&
-    (!filters.partPay || (filters.partPay==='yes' ? r.isPartPayment : !r.isPartPayment)) &&
-    (!filters.search || (r.memberName||'').toLowerCase().includes(filters.search.toLowerCase()) ||
-      String(r.roomNumber).includes(filters.search) || (r.billNumber||'').includes(filters.search)) &&
-    (!filters.from || new Date(r.receiptDate) >= new Date(filters.from)) &&
-    (!filters.to   || new Date(r.receiptDate) <= new Date(filters.to))
-  ), [receipts, filters]);
-
-  /* ── Export helpers ── */
-  const downloadBlob = (data, filename, type) => {
-    const url = window.URL.createObjectURL(new Blob([data], { type }));
-    const a = document.createElement('a'); a.href=url; a.download=filename; a.click();
-    window.URL.revokeObjectURL(url);
-  };
-  const exportCSV = async (col) => {
-    setExporting(col);
-    try { const r = await backupAPI.exportCSV(col); downloadBlob(r.data,`${col}-${new Date().toISOString().split('T')[0]}.csv`,'text/csv'); }
-    catch { alert('Export failed'); } finally { setExporting(''); }
-  };
-  const exportJSON = async () => {
-    setExporting('json');
-    try { const r = await backupAPI.exportJSON(); downloadBlob(r.data,`hostel-backup-${new Date().toISOString().split('T')[0]}.json`,'application/json'); }
-    catch { alert('Backup failed'); } finally { setExporting(''); }
-  };
-  const exportFilteredCSV = () => {
-    const hdrs = ['Date','Bill No','Room','Member','Type','Mode','Total','Paid','Due'];
-    const rows = filteredReceipts.map(r => [
-      new Date(r.receiptDate).toLocaleDateString('en-IN'), r.billNumber||'', r.roomNumber,
-      (r.memberName||'').replace(/,/g,';'), r.packageName, r.modeOfPayment,
-      r.totalAmount||0, r.amountPaid||r.totalAmount||0, r.balanceDue||0,
-    ]);
-    downloadBlob([hdrs.join(','), ...rows.map(r=>r.join(','))].join('\n'),
-      `receipts-${new Date().toISOString().split('T')[0]}.csv`, 'text/csv');
-  };
-
-  // F8: Natural language query — Anthropic is called server-side
-  const handleNLQuery = async (e) => {
-    e.preventDefault();
-    if (!nlQuery.trim()) return;
-    setNlLoading(true); setNlResults(null); setNlError('');
+    // Fetch room config
     try {
-      const resp    = await receiptsAPI.nlQuery(nlQuery);
-      const results = resp.data?.results ?? resp.data;
-      if (!Array.isArray(results)) throw new Error('Unexpected response shape');
-      setNlResults({ data: results, query: nlQuery });
-    } catch(err) {
-      const serverMsg = err.response?.data?.message || '';
-      if (serverMsg.includes('ANTHROPIC_API_KEY')) {
-        setNlError('ANTHROPIC_API_KEY is not set on the server. Add it in Render → Environment.');
-      } else if (serverMsg) {
-        // Show real server error so you can debug
-        setNlError(`Server: ${serverMsg}`);
-      } else {
-        setNlError('Could not process query. Try rephrasing.');
-      }
-    } finally { setNlLoading(false); }
+      const r = await roomsAPI.getOne(roomNo);
+      setRoomConfig(r.data);
+      setForm(p => ({ ...p, totalAmount: String(r.data?.rent || '') }));
+    } catch(e) {}
   };
 
-  const selStyle = { background:'var(--bg3)', border:'1px solid var(--border)', borderRadius:6, padding:'7px 10px', color:'var(--text)', outline:'none', fontSize:'0.82rem' };
-  const StatCard = ({ label, value, color='var(--accent)', sub, icon }) => (
-    <div style={{ background:'var(--bg2)', border:'1px solid var(--border)', borderRadius:10, padding:'16px 18px', display:'flex', alignItems:'center', gap:12 }}>
-      {icon && <span style={{fontSize:'1.6rem',opacity:0.8}}>{icon}</span>}
-      <div style={{flex:1,minWidth:0}}>
-        <div style={{ fontSize:'0.68rem', color:'var(--text3)', textTransform:'uppercase', letterSpacing:'0.08em', marginBottom:4 }}>{label}</div>
-        <div style={{ fontFamily:'Rajdhani', fontSize:'1.45rem', fontWeight:700, color, lineHeight:1 }}>{value}</div>
-        {sub && <div style={{ fontSize:'0.7rem', color:'var(--text3)', marginTop:3 }}>{sub}</div>}
-      </div>
-    </div>
-  );
+  // ── Member mode: all vs single ────────────────────────────────────────────
+  const handleMemberMode = (mode) => {
+    setForm(p => ({
+      ...p, memberMode: mode,
+      memberName: mode === 'all' ? roomMembers.map(m=>m.name).join(', ') : '',
+      memberMobile: mode === 'all' ? (roomMembers[0]?.mobileNo || '') : '',
+      memberId: mode === 'all' ? (roomMembers[0]?._id || '') : '',
+    }));
+  };
 
-  if (loading) return (
-    <div style={{display:'flex',alignItems:'center',justifyContent:'center',height:300,flexDirection:'column',gap:12}}>
-      <div style={{width:36,height:36,border:'3px solid var(--border)',borderTopColor:'var(--accent)',borderRadius:'50%',animation:'spin 0.8s linear infinite'}} />
-      <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
-      <span style={{color:'var(--text3)',fontSize:'0.85rem'}}>Loading analytics...</span>
-    </div>
-  );
+  const handleSingleMember = (name) => {
+    const m = roomMembers.find(x => x.name === name);
+    setForm(p => ({ ...p, memberName: name, memberMobile: m?.mobileNo || '', memberId: m?._id || '' }));
+  };
 
-  const TABS = [
-    { id:'overview',  label:'📊 Overview'  },
-    { id:'trends',    label:'📈 Trends'    },
-    { id:'insights',  label:'🔍 Insights'  },
-    { id:'rooms',     label:'🏠 Rooms'     },
-    { id:'payments',  label:'🧾 Payments'  },
-    { id:'members',   label:'👥 Members'   },
-    { id:'export',    label:'💾 Export'    },
-  ];
+  // ── Package change: auto-fill amount, for final = cumulative ─────────────
+  const handlePackageChange = async (pkg) => {
+    let amount = '';
+    let notes = '';
+    const billingMonth = form.billingMonth;
+
+    if (pkg === 'rent')    { amount = String(roomConfig?.rent    || ''); }
+    if (pkg === 'advance') { amount = String(roomConfig?.advance || ''); }
+
+    if (pkg === 'electric' && form.roomNumber && billingMonth) {
+      // Fetch current month's electric reading only
+      try {
+        const [year, month] = billingMonth.split('-').map(Number);
+        const eRes = await electricAPI.getByRoom(form.roomNumber);
+        const readings = eRes.data?.data || eRes.data || [];
+        const thisMonth = readings.find(r => r.year === year && r.month === month);
+        if (thisMonth) {
+          amount = String(thisMonth.totalAmount || '');
+          notes = `Electric: ${MONTHS[month-1]} ${year} · ${thisMonth.unitsConsumed} units @ ₹${thisMonth.ratePerUnit}/unit`;
+        } else {
+          notes = 'No electric reading found for this month. Add it in Electric section first.';
+        }
+      } catch(e) {}
+    }
+
+    if (pkg === 'final' && form.roomNumber && billingMonth) {
+      // Final = rent (current month) + electric (current month only) + pending balances
+      try {
+        const [year, month] = (billingMonth || '').split('-').map(Number);
+        const fixedRent = roomConfig?.rent || 0;
+
+        // Get this month's electric only
+        let electricAmt = 0;
+        let electricNote = '';
+        if (year && month) {
+          const eRes = await electricAPI.getByRoom(form.roomNumber);
+          const readings = eRes.data?.data || eRes.data || [];
+          const thisMonthElec = readings.find(r => r.year === year && r.month === month);
+          if (thisMonthElec) {
+            electricAmt = thisMonthElec.totalAmount || 0;
+            electricNote = ` + Electric ${MONTHS[month-1]}: ₹${electricAmt}`;
+          }
+        }
+
+        // Pending balances from part payments
+        const rRes = await receiptsAPI.getAll({ room: form.roomNumber, limit: 500 });
+        const rList = rRes.data?.data || rRes.data || [];
+        const pendingBalance = rList.reduce((s,r) => s + (r.balanceDue || 0), 0);
+
+        amount = String(fixedRent + electricAmt + pendingBalance);
+        notes = `Final Bill: Rent ₹${fixedRent}${electricNote}${pendingBalance > 0 ? ` + Pending ₹${pendingBalance}` : ''}`;
+      } catch(e) {}
+    }
+
+    setForm(p => ({ ...p, packageName: pkg, totalAmount: amount, notes }));
+  };
+
+  // ── Part payment recalc ───────────────────────────────────────────────────
+  const handleAmountPaidChange = (val) => {
+    const paid  = parseFloat(val) || 0;
+    const total = parseFloat(form.totalAmount) || 0;
+    setForm(p => ({ ...p, amountPaid: val, balanceDue: String(Math.max(0, total - paid)) }));
+  };
+
+  const handlePartPayment = (checked) => {
+    setForm(p => ({
+      ...p, isPartPayment: checked,
+      amountPaid: checked ? '' : p.totalAmount,
+      balanceDue: checked ? p.totalAmount : '0',
+    }));
+  };
+
+  // F7: AI-generated receipt notes
+  const generateAINote = async () => {
+    if (!form.roomNumber || !form.totalAmount) return;
+    setAiNotesLoading(true);
+    try {
+      const memberName = form.memberMode === 'all'
+        ? (roomMembers.map(m => m.name).join(', ') || 'All members')
+        : (form.memberName || 'Member');
+      const resp = await receiptsAPI.generateNote({
+        memberName, roomNumber: form.roomNumber, packageName: form.packageName,
+        totalAmount: form.totalAmount, modeOfPayment: form.modeOfPayment,
+        isPartPayment: form.isPartPayment, balanceDue: form.balanceDue || 0,
+      });
+      const note = resp.data?.note;
+      if (note) setForm(p => ({ ...p, notes: note }));
+      else toast('Could not generate note', 'error');
+    } catch(_) { toast('Could not generate note', 'error'); }
+    finally { setAiNotesLoading(false); }
+  };
+
+  // ── Save receipt ──────────────────────────────────────────────────────────
+  const save = async () => {
+    if (!form.roomNumber) { toast('Please select a room', 'error'); return; }
+    if (!form.totalAmount) { toast('Please enter amount', 'error'); return; }
+
+    const amountPaid = form.isPartPayment ? (parseFloat(form.amountPaid) || 0) : (parseFloat(form.totalAmount) || 0);
+    const balanceDue = Math.max(0, (parseFloat(form.totalAmount) || 0) - amountPaid);
+
+    // Build members list
+    const allMem = roomMembers.map(m => ({ name:m.name, memberId:m._id, memberUniqueId:m.memberId, mobileNo:m.mobileNo }));
+    const isAll  = form.memberMode === 'all';
+    const memberName   = isAll ? allMem.map(m=>m.name).join(', ') : form.memberName;
+    const memberMobile = isAll ? (roomMembers[0]?.mobileNo || '') : form.memberMobile;
+    const memberId     = isAll ? (roomMembers[0]?._id || '') : form.memberId;
+    const members_list = isAll ? allMem : allMem.filter(m => m.name === form.memberName);
+
+    const payload = {
+      ...form,
+      memberName, memberMobile, memberId,
+      members: members_list,
+      totalAmount:   parseFloat(form.totalAmount) || 0,
+      amountPaid,
+      balanceDue,
+      amountInWords: numberToWords(amountPaid) + ' Rupees Only',
+      paymentType:   form.packageName,
+      receiptNumber: parseInt(form.receiptNumber) || 1,
+      billSerial:    parseInt(form.billSerial) || 1,
+    };
+
+    try {
+      const res = await receiptsAPI.create(payload);
+      // Auto-update roomLeavingDate for members if toDate given
+      if (form.toDate) {
+        const toUpdate = isAll ? roomMembers : roomMembers.filter(m => m.name === form.memberName);
+        await Promise.all(toUpdate.map(m => membersAPI.update(m._id, { roomLeavingDate: form.toDate }).catch(()=>{})));
+      }
+      toast(`Receipt created${form.isPartPayment ? ` · Balance: ₹${balanceDue}` : ''}`);
+      setShowModal(false);
+      loadReceipts(page);
+      setShowPrint(res.data);
+    } catch(e) {
+      toast(e.response?.data?.message || 'Error creating receipt', 'error');
+    }
+  };
+
+  const del = async (id) => {
+    if (!window.confirm('Delete this receipt?')) return;
+    try { await receiptsAPI.delete(id); toast('Deleted'); loadReceipts(page); }
+    catch(e) { toast('Error deleting', 'error'); }
+  };
+
+  // Create a due-clearance receipt from an outstanding part payment
+  const saveDueReceipt = async () => {
+    if (!dueModal) return;
+    try {
+      const nums = await receiptsAPI.getNextNumbers();
+      const payload = {
+        ...nums.data,
+        roomNumber: dueModal.roomNumber,
+        memberId: dueModal.memberId,
+        memberName: dueModal.memberName,
+        memberMobile: dueModal.memberMobile,
+        members: dueModal.members || [],
+        packageName: 'other',
+        paymentType: 'other',
+        totalAmount: dueModal.balanceDue,
+        amountPaid: dueModal.balanceDue,
+        balanceDue: 0,
+        isPartPayment: false,
+        modeOfPayment: dueForm.modeOfPayment,
+        receiptDate: dueForm.receiptDate || new Date().toISOString().split('T')[0],
+        notes: dueForm.notes || `Due clearance against Bill No. ${dueModal.billNumber}`,
+        amountInWords: numberToWords(dueModal.balanceDue) + ' Rupees Only',
+        fromDate: dueModal.fromDate,
+        toDate: dueModal.toDate,
+        monthYear: dueModal.monthYear,
+        billingMonth: dueModal.billingMonth,
+      };
+      await receiptsAPI.create(payload);
+      toast(`Due receipt created for ₹${dueModal.balanceDue.toLocaleString('en-IN')}`);
+      setDueModal(null);
+      loadReceipts(page);
+    } catch(e) {
+      toast(e.response?.data?.message || 'Error creating due receipt', 'error');
+    }
+  };
+
+  const openModal = async () => {
+    try {
+      const nums = await receiptsAPI.getNextNumbers();
+      setForm({ ...EMPTY, ...nums.data, receiptDate: new Date().toISOString().split('T')[0] });
+    } catch { setForm({ ...EMPTY }); }
+    setRoomMembers([]); setRoomConfig(null);
+    setShowModal(true);
+  };
+
+  const doPrint = () => {
+    const w = window.open('', '_blank');
+    w.document.write('<html><head><title>Receipt</title>');
+    w.document.write('<link href="https://fonts.googleapis.com/css2?family=Noto+Sans:wght@400;600;700&display=swap" rel="stylesheet">');
+    w.document.write('<style>*{box-sizing:border-box;margin:0;padding:0;}body{font-family:"Noto Sans",sans-serif;padding:20px;color:#111;}</style>');
+    w.document.write('</head><body>');
+    w.document.write(printRef.current.innerHTML);
+    w.document.write('</body></html>');
+    w.document.close();
+    setTimeout(() => w.print(), 500);
+  };
+
+  const now = new Date();
+  const billingMonthOptions = [];
+  for (let i = 0; i < 13; i++) {
+    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+    const val = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
+    const label = `${MONTHS[d.getMonth()]} ${d.getFullYear()}`;
+    billingMonthOptions.push({ val, label });
+  }
 
   return (
     <div>
       <div className="page-header">
-        <div>
-          <h2>Reports & Analytics</h2>
-          <p>{receipts.length} receipts · {activeMembers.length} active members · ₹{fmtK(totalIncome)} total income</p>
-        </div>
-        <button className="btn btn-secondary" onClick={exportJSON} disabled={!!exporting}>
-          {exporting==='json' ? '⏳' : '💾'} Full Backup
-        </button>
+        <div><h2>Receipts</h2><p>{total} receipts · room-wise billing</p></div>
+        <button className="btn btn-primary" onClick={openModal}>+ New Receipt</button>
       </div>
 
-      <div className="tabs" style={{marginBottom:20}}>
-        {TABS.map(t => (
-          <button key={t.id} className={`tab ${tab===t.id?'active':''}`} onClick={()=>setTab(t.id)}>{t.label}</button>
-        ))}
+      {/* Filters */}
+      <div style={{ display:'flex', gap:8, marginBottom:14, flexWrap:'wrap', alignItems:'center' }}>
+        <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="🔍 Name / bill no / room…" style={{ ...selStyle, flex:1, minWidth:160 }} />
+        <select style={selStyle} value={roomF} onChange={e=>setRoomF(e.target.value)}>
+          <option value="">All Rooms</option>
+          {Array.from({length:20},(_,i)=>i+1).map(n=><option key={n} value={n}>Room {n}</option>)}
+        </select>
+        <select style={selStyle} value={typeF} onChange={e=>setTypeF(e.target.value)}>
+          <option value="">All Types</option>
+          {Object.entries(PKG).map(([k,v])=><option key={k} value={k}>{v}</option>)}
+        </select>
+        <select style={selStyle} value={modeF} onChange={e=>setModeF(e.target.value)}>
+          <option value="">All Modes</option>
+          <option value="cash">Cash</option>
+          <option value="online">Online</option>
+        </select>
+        <input type="date" style={selStyle} value={fromF} onChange={e=>setFromF(e.target.value)} title="From date" />
+        <input type="date" style={selStyle} value={toF} onChange={e=>setToF(e.target.value)} title="To date" />
+        {(search||roomF||typeF||modeF||fromF||toF) && (
+          <button className="btn btn-secondary btn-xs" onClick={()=>{setSearch('');setRoomF('');setTypeF('');setModeF('');setFromF('');setToF('');}}>✕ Clear</button>
+        )}
       </div>
 
-      {/* F8: Natural Language Query Bar */}
-      <form onSubmit={handleNLQuery} style={{marginBottom:16,display:'flex',gap:8,alignItems:'center',flexWrap:'wrap'}}>
-        <div style={{flex:1,minWidth:260,position:'relative'}}>
-          <input
-            value={nlQuery}
-            onChange={e=>{setNlQuery(e.target.value);setNlError('');setNlResults(null);}}
-            placeholder="✨ Ask anything — e.g. which room has highest dues? or show members with no receipts"
-            style={{width:'100%',background:'var(--bg2)',border:'1px solid rgba(102,126,234,0.4)',borderRadius:8,padding:'10px 14px',color:'var(--text)',outline:'none',fontSize:'0.85rem',boxShadow:'0 0 0 3px rgba(102,126,234,0.06)'}}
-          />
-        </div>
-        <button type="submit" disabled={nlLoading||!nlQuery.trim()}
-          style={{padding:'10px 18px',background:'linear-gradient(135deg,#667eea,#764ba2)',color:'white',border:'none',borderRadius:8,cursor:nlLoading?'wait':'pointer',fontWeight:700,fontSize:'0.85rem',whiteSpace:'nowrap',opacity:nlLoading?0.7:1}}>
-          {nlLoading ? '⏳ Thinking...' : '✨ Ask AI'}
-        </button>
-        {nlResults && <button type="button" onClick={()=>{setNlResults(null);setNlQuery('');}} style={{padding:'10px 12px',background:'var(--bg3)',border:'1px solid var(--border)',borderRadius:8,cursor:'pointer',color:'var(--text3)',fontSize:'0.82rem'}}>✕ Clear</button>}
-      </form>
-
-      {/* NL Query Results */}
-      {nlError && (
-        <div style={{marginBottom:14,padding:'12px 16px',background:'rgba(231,76,60,0.08)',border:'1px solid rgba(231,76,60,0.25)',borderRadius:8,color:'var(--danger)',fontSize:'0.85rem'}}>
-          ⚠️ {nlError}
-        </div>
-      )}
-      {nlResults && nlResults.data?.length >= 0 && (
-        <div className="card" style={{marginBottom:16,border:'1px solid rgba(102,126,234,0.3)'}}>
-          <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:12}}>
-            <div>
-              <div style={{fontFamily:'Rajdhani',fontWeight:700,color:'var(--text)',fontSize:'0.95rem'}}>✨ AI Query Result</div>
-              <div style={{fontSize:'0.72rem',color:'var(--text3)',marginTop:2}}>"{nlResults.query}" — {nlResults.data.length} record{nlResults.data.length!==1?'s':''}</div>
-            </div>
-          </div>
-          {nlResults.data.length === 0 ? (
-            <div style={{color:'var(--text3)',fontSize:'0.85rem',padding:'12px 0'}}>No results found.</div>
-          ) : (
+      <div className="card">
+        {loading ? <div style={{textAlign:'center',padding:32,color:'var(--text3)'}}>⏳ Loading...</div> : (
+          <>
             <div className="table-wrap">
               <table>
                 <thead>
-                  <tr>{Object.keys(nlResults.data[0]).filter(k=>!['__v','hostelId'].includes(k)).map(k=><th key={k}>{k}</th>)}</tr>
+                  <tr><th>#</th><th>Bill No.</th><th>Date</th><th>Room</th><th>Members</th><th>Type</th><th>Total</th><th>Paid</th><th>Balance</th><th>Mode</th><th>Actions</th></tr>
                 </thead>
                 <tbody>
-                  {nlResults.data.map((row,i)=>(
-                    <tr key={i}>
-                      {Object.entries(row).filter(([k])=>!['__v','hostelId'].includes(k)).map(([k,v])=>(
-                        <td key={k} style={{fontSize:'0.82rem'}}>
-                          {v instanceof Object && !Array.isArray(v) ? JSON.stringify(v) :
-                           Array.isArray(v) ? v.join(', ') :
-                           k.toLowerCase().includes('date') && v ? new Date(v).toLocaleDateString('en-IN') :
-                           k.toLowerCase().includes('amount') || k.toLowerCase().includes('total') || k.toLowerCase().includes('rent') ? (typeof v==='number'?`₹${v.toLocaleString('en-IN')}`:v) :
-                           String(v ?? '—')}
-                        </td>
-                      ))}
+                  {receipts.length === 0 ? (
+                    <tr><td colSpan={11}><div className="empty-state"><div className="empty-icon">🧾</div><p>No receipts found</p></div></td></tr>
+                  ) : receipts.map((r,i)=>(
+                    <tr key={r._id}>
+                      <td style={{color:'var(--text3)',fontSize:'0.75rem'}}>#{r.receiptNumber||i+1}</td>
+                      <td style={{fontFamily:'monospace',fontSize:'0.75rem',color:'var(--accent)'}}>{r.billNumber||'—'}</td>
+                      <td style={{fontSize:'0.8rem'}}>{r.receiptDate?new Date(r.receiptDate).toLocaleDateString('en-IN'):'—'}</td>
+                      <td><span className="badge badge-blue">R{r.roomNumber}</span></td>
+                      <td style={{fontSize:'0.78rem',color:'var(--text2)',maxWidth:120,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}} title={r.memberName}>{r.memberName||'—'}</td>
+                      <td><span className="badge badge-yellow" style={{fontSize:'0.68rem'}}>{PKG[r.packageName]||r.packageName}</span></td>
+                      <td style={{fontWeight:600}}>₹{(r.totalAmount||0).toLocaleString('en-IN')}</td>
+                      <td style={{color:'var(--success)',fontWeight:600}}>₹{(r.amountPaid||r.totalAmount||0).toLocaleString('en-IN')}</td>
+                      <td style={{color:(r.balanceDue||0)>0?'var(--danger)':'var(--text3)',fontWeight:(r.balanceDue||0)>0?700:400,fontSize:'0.8rem'}}>
+                        {(r.balanceDue||0)>0?`₹${r.balanceDue.toLocaleString('en-IN')}`:'—'}
+                      </td>
+                      <td><span className={`badge ${r.modeOfPayment==='online'?'badge-blue':'badge-green'}`} style={{fontSize:'0.68rem'}}>{r.modeOfPayment||'cash'}</span></td>
+                      <td>
+                        <div style={{display:'flex',gap:4,flexWrap:'wrap'}}>
+                          <button className="btn btn-success btn-xs" onClick={()=>setShowPrint(r)}>🖨</button>
+                          {(r.memberMobile||roomMembers[0]?.mobileNo) && (
+                            <button className="btn btn-xs" style={{background:'#25d366',color:'white',border:'none'}}
+                              onClick={()=>whatsapp.sendReceipt(r.memberMobile||'',r)} title="WhatsApp">📱</button>
+                          )}
+                          {r.isPartPayment && (r.balanceDue||0) > 0 && (
+                            <button className="btn btn-xs"
+                              style={{background:'#f39c12',color:'white',border:'none',fontWeight:700,whiteSpace:'nowrap'}}
+                              onClick={()=>{ setDueModal(r); setDueForm({ modeOfPayment:'cash', receiptDate: new Date().toISOString().split('T')[0], notes:'' }); }}
+                              title="Generate due clearance receipt">
+                              ⚠️ Due
+                            </button>
+                          )}
+                          <button className="btn btn-danger btn-xs" onClick={()=>del(r._id)}>Del</button>
+                        </div>
+                      </td>
                     </tr>
                   ))}
                 </tbody>
               </table>
             </div>
-          )}
-        </div>
-      )}
-
-      {/* ════════════════════════════════════════════════════════
-          OVERVIEW TAB
-      ════════════════════════════════════════════════════════ */}
-      {tab === 'overview' && (
-        <div style={{display:'flex',flexDirection:'column',gap:16}}>
-
-          {/* KPI Cards */}
-          <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(165px,1fr))',gap:12}}>
-            <StatCard icon="💰" label="Total Income"      value={`₹${fmtK(totalIncome)}`}    color={C.green} sub={`${receipts.length} receipts`} />
-            <StatCard icon="📤" label="Total Expenditure" value={`₹${fmtK(totalExpend)}`}    color={C.red}   sub="Salary + Maintenance" />
-            <StatCard icon="💹" label="Net Balance"       value={`₹${fmtK(netBalance)}`}     color={netBalance>=0?C.green:C.red} sub={totalIncome>0?`${Math.round(netBalance/totalIncome*100)}% margin`:''} />
-            <StatCard icon="👥" label="Active Members"    value={activeMembers.length}        color={C.blue}  sub={`of ${members.length} total`} />
-            <StatCard icon="💵" label="Cash Collected"    value={`₹${fmtK(cashTotal)}`}      sub={totalIncome>0?`${Math.round(cashTotal/totalIncome*100)}% of income`:''} />
-            <StatCard icon="📱" label="Online Collected"  value={`₹${fmtK(onlineTotal)}`}    color={C.teal}  sub={totalIncome>0?`${Math.round(onlineTotal/totalIncome*100)}% of income`:''} />
-            <StatCard icon="⚠️" label="Pending Dues"      value={`₹${fmtK(totalDues)}`}      color={totalDues>0?C.red:'var(--text3)'} sub="Part payment balances" />
-            <StatCard icon="🚔" label="Police Unverified" value={members.filter(m=>m.isActive!==false&&!m.policeFormVerified).length} color={C.orange} sub="Compliance gap" />
-          </div>
-
-          {/* Income vs Expenditure Composed Chart */}
-          {incomeVsExpend.length > 0 && (
-            <div className="card">
-              <SH title="Income vs Expenditure vs Net" sub="Monthly comparison — green area = profit zone" />
-              <ResponsiveContainer width="100%" height={240}>
-                <ComposedChart data={incomeVsExpend} margin={{top:4,right:8,left:0,bottom:0}}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false} />
-                  <XAxis dataKey="label" tick={{fill:'var(--text3)',fontSize:11}} axisLine={false} tickLine={false} />
-                  <YAxis tick={{fill:'var(--text3)',fontSize:11}} axisLine={false} tickLine={false} tickFormatter={fmtK} />
-                  <Tooltip content={<CT />} />
-                  <Legend wrapperStyle={{fontSize:'0.75rem',paddingTop:8}} />
-                  <Area type="monotone" dataKey="income" name="Income" fill={`${C.green}22`} stroke={C.green} strokeWidth={2} />
-                  <Bar dataKey="expend" name="Expenditure" fill={`${C.red}88`} radius={[3,3,0,0]} />
-                  <Line type="monotone" dataKey="net" name="Net Balance" stroke={C.gold} strokeWidth={2.5} dot={{r:4,fill:C.gold}} activeDot={{r:6}} strokeDasharray="5 3" />
-                </ComposedChart>
-              </ResponsiveContainer>
-            </div>
-          )}
-
-          {/* Monthly Breakdown Bar + Collection Rate */}
-          <div style={{display:'grid',gridTemplateColumns:'2fr 1fr',gap:14}}>
-            <div className="card">
-              <SH title="Monthly Revenue Breakdown" sub="Rent · Electric · Advance stacked" />
-              <ResponsiveContainer width="100%" height={210}>
-                <BarChart data={monthlyData} margin={{top:4,right:4,left:0,bottom:0}}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false} />
-                  <XAxis dataKey="label" tick={{fill:'var(--text3)',fontSize:11}} axisLine={false} tickLine={false} />
-                  <YAxis tick={{fill:'var(--text3)',fontSize:11}} axisLine={false} tickLine={false} tickFormatter={fmtK} />
-                  <Tooltip content={<CT />} />
-                  <Legend wrapperStyle={{fontSize:'0.72rem'}} />
-                  <Bar dataKey="rent"     name="Rent"     stackId="a" fill={C.gold}   radius={[0,0,0,0]} />
-                  <Bar dataKey="electric" name="Electric" stackId="a" fill={C.blue}   radius={[0,0,0,0]} />
-                  <Bar dataKey="advance"  name="Advance"  stackId="a" fill={C.green}  radius={[3,3,0,0]} />
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
-
-            <div className="card">
-              <SH title="Collection Rate" sub="% of rooms that paid each month" />
-              <ResponsiveContainer width="100%" height={210}>
-                <BarChart data={collectionRate} layout="vertical" margin={{top:4,right:20,left:0,bottom:0}}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" horizontal={false} />
-                  <XAxis type="number" domain={[0,100]} tick={{fill:'var(--text3)',fontSize:10}} tickFormatter={v=>`${v}%`} axisLine={false} tickLine={false} />
-                  <YAxis type="category" dataKey="label" tick={{fill:'var(--text3)',fontSize:10}} axisLine={false} tickLine={false} width={38} />
-                  <Tooltip formatter={v=>`${v}%`} contentStyle={{background:'var(--bg2)',border:'1px solid var(--border2)',borderRadius:8,fontSize:'0.8rem'}} />
-                  <ReferenceLine x={80} stroke={C.green} strokeDasharray="4 2" />
-                  <Bar dataKey="rate" name="Collected %" fill={C.teal} radius={[0,3,3,0]}
-                    label={{ position:'right', fill:'var(--text3)', fontSize:10, formatter:v=>`${v}%` }} />
-                </BarChart>
-              </ResponsiveContainer>
-              <div style={{fontSize:'0.68rem',color:'var(--text3)',marginTop:6}}>Green line = 80% target</div>
-            </div>
-          </div>
-
-          {/* Payment Mode Trend + Type Pie */}
-          <div style={{display:'grid',gridTemplateColumns:'2fr 1fr',gap:14}}>
-            <div className="card">
-              <SH title="Cash vs Online Trend" sub="% split of payment modes month-by-month" />
-              <ResponsiveContainer width="100%" height={200}>
-                <AreaChart data={modeTrend} margin={{top:4,right:4,left:0,bottom:0}}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false} />
-                  <XAxis dataKey="label" tick={{fill:'var(--text3)',fontSize:11}} axisLine={false} tickLine={false} />
-                  <YAxis tick={{fill:'var(--text3)',fontSize:11}} axisLine={false} tickLine={false} tickFormatter={v=>`${v}%`} domain={[0,100]} />
-                  <Tooltip formatter={v=>`${v}%`} contentStyle={{background:'var(--bg2)',border:'1px solid var(--border2)',borderRadius:8,fontSize:'0.8rem'}} />
-                  <Legend wrapperStyle={{fontSize:'0.72rem'}} />
-                  <Area type="monotone" dataKey="cashPct"   name="Cash %"   stackId="1" fill={`${C.gold}55`}  stroke={C.gold}  strokeWidth={2} />
-                  <Area type="monotone" dataKey="onlinePct" name="Online %" stackId="1" fill={`${C.teal}55`}  stroke={C.teal}  strokeWidth={2} />
-                </AreaChart>
-              </ResponsiveContainer>
-            </div>
-
-            <div className="card" style={{display:'flex',flexDirection:'column',justifyContent:'space-between'}}>
-              <SH title="Payment Type Split" />
-              <ResponsiveContainer width="100%" height={160}>
-                <PieChart>
-                  <Pie data={(() => {
-                    const t={};
-                    receipts.forEach(r=>{ const k=r.packageName||'other'; t[k]=(t[k]||0)+(r.amountPaid||r.totalAmount||0); });
-                    return Object.entries(t).map(([name,value])=>({name,value}));
-                  })()} cx="50%" cy="50%" outerRadius={70} innerRadius={38} paddingAngle={3} dataKey="value">
-                    {PIE_COLORS.map((c,i)=><Cell key={i} fill={c} />)}
-                  </Pie>
-                  <Tooltip formatter={v=>`₹${fmt(v)}`} contentStyle={{background:'var(--bg2)',border:'1px solid var(--border2)',borderRadius:8,fontSize:'0.8rem'}} />
-                  <Legend wrapperStyle={{fontSize:'0.7rem'}} />
-                </PieChart>
-              </ResponsiveContainer>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* ════════════════════════════════════════════════════════
-          TRENDS TAB
-      ════════════════════════════════════════════════════════ */}
-      {tab === 'trends' && (
-        <div style={{display:'flex',flexDirection:'column',gap:16}}>
-
-          {/* Revenue line + rolling avg */}
-          <div className="card">
-            <SH title="Revenue Trend — All Time" sub="Month-by-month income with trajectory" />
-            <ResponsiveContainer width="100%" height={260}>
-              <ComposedChart data={monthlyData} margin={{top:8,right:8,left:0,bottom:0}}>
-                <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false} />
-                <XAxis dataKey="label" tick={{fill:'var(--text3)',fontSize:11}} axisLine={false} tickLine={false} />
-                <YAxis tick={{fill:'var(--text3)',fontSize:11}} axisLine={false} tickLine={false} tickFormatter={fmtK} />
-                <Tooltip content={<CT />} />
-                <Legend wrapperStyle={{fontSize:'0.75rem',paddingTop:8}} />
-                <Bar dataKey="income" name="Monthly Income" fill={`${C.gold}33`} radius={[3,3,0,0]} />
-                <Line type="monotone" dataKey="income" name="Trend" stroke={C.gold} strokeWidth={2.5} dot={false} />
-              </ComposedChart>
-            </ResponsiveContainer>
-          </div>
-
-          {/* Day of week heatmap-style */}
-          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:14}}>
-            <div className="card">
-              <SH title="Payments by Day of Week" sub="When do members typically pay?" />
-              <ResponsiveContainer width="100%" height={220}>
-                <BarChart data={dowData} margin={{top:4,right:4,left:0,bottom:0}}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false} />
-                  <XAxis dataKey="day" tick={{fill:'var(--text3)',fontSize:12}} axisLine={false} tickLine={false} />
-                  <YAxis tick={{fill:'var(--text3)',fontSize:11}} axisLine={false} tickLine={false} />
-                  <Tooltip content={<CT />} />
-                  <Bar dataKey="count" name="# Payments" fill={C.blue} radius={[4,4,0,0]}>
-                    {dowData.map((d,i) => {
-                      const max = Math.max(...dowData.map(x=>x.count));
-                      const alpha = max > 0 ? 0.3 + (d.count/max)*0.7 : 0.3;
-                      return <Cell key={i} fill={C.blue} fillOpacity={alpha} />;
-                    })}
-                  </Bar>
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
-
-            <div className="card">
-              <SH title="Revenue by Day of Week" sub="Which day generates most income?" />
-              <ResponsiveContainer width="100%" height={220}>
-                <BarChart data={dowData} margin={{top:4,right:4,left:0,bottom:0}}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false} />
-                  <XAxis dataKey="day" tick={{fill:'var(--text3)',fontSize:12}} axisLine={false} tickLine={false} />
-                  <YAxis tick={{fill:'var(--text3)',fontSize:11}} axisLine={false} tickLine={false} tickFormatter={fmtK} />
-                  <Tooltip content={<CT />} />
-                  <Bar dataKey="amount" name="Revenue" fill={C.gold} radius={[4,4,0,0]}>
-                    {dowData.map((d,i) => {
-                      const max = Math.max(...dowData.map(x=>x.amount));
-                      const alpha = max > 0 ? 0.3 + (d.amount/max)*0.7 : 0.3;
-                      return <Cell key={i} fill={C.gold} fillOpacity={alpha} />;
-                    })}
-                  </Bar>
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
-          </div>
-
-          {/* Tenure distribution */}
-          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:14}}>
-            <div className="card">
-              <SH title="Member Tenure Distribution" sub="How long do members typically stay?" />
-              <ResponsiveContainer width="100%" height={220}>
-                <PieChart>
-                  <Pie data={tenureData} cx="50%" cy="50%" outerRadius={85} innerRadius={45} paddingAngle={4} dataKey="value" label={({name,percent})=>`${name} ${(percent*100).toFixed(0)}%`} labelLine={false}>
-                    {tenureData.map((_,i)=><Cell key={i} fill={PIE_COLORS[i%PIE_COLORS.length]} />)}
-                  </Pie>
-                  <Tooltip formatter={v=>`${v} members`} contentStyle={{background:'var(--bg2)',border:'1px solid var(--border2)',borderRadius:8,fontSize:'0.8rem'}} />
-                </PieChart>
-              </ResponsiveContainer>
-            </div>
-
-            {/* Electric consumption trend */}
-            <div className="card">
-              <SH title="Electric Consumption by Room" sub="Total units consumed — highest consumers" />
-              <ResponsiveContainer width="100%" height={220}>
-                <BarChart data={elecByRoom} layout="vertical" margin={{top:4,right:24,left:0,bottom:0}}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" horizontal={false} />
-                  <XAxis type="number" tick={{fill:'var(--text3)',fontSize:10}} axisLine={false} tickLine={false} />
-                  <YAxis type="category" dataKey="label" tick={{fill:'var(--text3)',fontSize:11}} axisLine={false} tickLine={false} width={32} />
-                  <Tooltip formatter={(v,name)=> name==='units' ? `${v} units` : `₹${fmt(v)}`} contentStyle={{background:'var(--bg2)',border:'1px solid var(--border2)',borderRadius:8,fontSize:'0.8rem'}} />
-                  <Bar dataKey="units" name="units" fill={C.blue} radius={[0,4,4,0]}
-                    label={{position:'right',fill:'var(--text3)',fontSize:10}} />
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
-          </div>
-
-          {/* Room revenue radar */}
-          {roomRevenue.length >= 3 && (
-            <div className="card">
-              <SH title="Room Revenue Ranking" sub="Top 10 rooms by total income generated" />
-              <ResponsiveContainer width="100%" height={220}>
-                <BarChart data={roomRevenue} margin={{top:4,right:8,left:0,bottom:0}}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false} />
-                  <XAxis dataKey="label" tick={{fill:'var(--text3)',fontSize:11}} axisLine={false} tickLine={false} />
-                  <YAxis tick={{fill:'var(--text3)',fontSize:11}} axisLine={false} tickLine={false} tickFormatter={fmtK} />
-                  <Tooltip content={<CT />} />
-                  <Legend wrapperStyle={{fontSize:'0.72rem'}} />
-                  <Bar dataKey="rent"     name="Rent"     stackId="a" fill={C.gold}  radius={[0,0,0,0]} />
-                  <Bar dataKey="electric" name="Electric" stackId="a" fill={C.blue}  radius={[3,3,0,0]} />
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* ════════════════════════════════════════════════════════
-          INSIGHTS TAB
-      ════════════════════════════════════════════════════════ */}
-      {tab === 'insights' && (
-        <div style={{display:'flex',flexDirection:'column',gap:14}}>
-          <div className="card" style={{borderColor:'rgba(240,165,0,0.3)'}}>
-            <SH title="🔍 Pattern Analysis & Insights" sub="Auto-detected from your hostel data" />
-            {insights.length === 0 ? (
-              <div className="empty-state"><div className="empty-icon">🔍</div><p>Add more data to unlock insights</p></div>
-            ) : (
-              <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(340px,1fr))',gap:10,marginTop:4}}>
-                {insights.map((ins,i) => <Insight key={i} {...ins} />)}
+            {pages>1&&(
+              <div style={{display:'flex',gap:6,justifyContent:'center',marginTop:14,alignItems:'center'}}>
+                <button className="btn btn-secondary btn-xs" disabled={page===1} onClick={()=>loadReceipts(page-1)}>← Prev</button>
+                <span style={{fontSize:'0.8rem',color:'var(--text3)'}}>Page {page} of {pages} · {total} receipts</span>
+                <button className="btn btn-secondary btn-xs" disabled={page===pages} onClick={()=>loadReceipts(page+1)}>Next →</button>
               </div>
             )}
-          </div>
+          </>
+        )}
+      </div>
 
-          {/* Month-by-month table */}
-          <div className="card">
-            <SH title="Month-wise Breakdown Table" sub="Detailed financial summary per month" />
-            <div className="table-wrap">
-              <table>
-                <thead><tr><th>Month</th><th>Receipts</th><th>Rent</th><th>Electric</th><th>Advance</th><th>Other</th><th>Total Income</th><th>Collection %</th></tr></thead>
-                <tbody>
-                  {[...monthlyData].reverse().map(m => {
-                    const cr = collectionRate.find(c=>c.key===m.key);
-                    return (
-                      <tr key={m.key}>
-                        <td style={{fontWeight:600}}>{m.label}</td>
-                        <td style={{color:'var(--text3)'}}>{m.count}</td>
-                        <td>{m.rent     ? `₹${fmt(m.rent)}`     : '—'}</td>
-                        <td>{m.electric ? `₹${fmt(m.electric)}` : '—'}</td>
-                        <td>{m.advance  ? `₹${fmt(m.advance)}`  : '—'}</td>
-                        <td>{m.other    ? `₹${fmt(m.other)}`    : '—'}</td>
-                        <td style={{color:'var(--accent)',fontWeight:700}}>₹{fmt(m.income)}</td>
-                        <td>
-                          <div style={{display:'flex',alignItems:'center',gap:8}}>
-                            <div style={{flex:1,height:6,background:'var(--bg3)',borderRadius:3,overflow:'hidden'}}>
-                              <div style={{width:`${cr?.rate||0}%`,height:'100%',background:cr?.rate>=80?C.green:cr?.rate>=50?C.gold:C.red,borderRadius:3,transition:'width 0.3s'}} />
-                            </div>
-                            <span style={{fontSize:'0.75rem',color:cr?.rate>=80?C.green:cr?.rate>=50?C.gold:C.red,fontWeight:600,minWidth:32}}>{cr?.rate||0}%</span>
+      {/* ── New Receipt Modal ─────────────────────────────────────────────── */}
+      {showModal && (
+        <div className="modal-overlay" onClick={e=>e.target===e.currentTarget&&setShowModal(false)}>
+          <div className="modal" style={{maxWidth:600}}>
+            <div className="modal-header"><h3>Generate Room Receipt</h3><button className="close-btn" onClick={()=>setShowModal(false)}>✕</button></div>
+            <div className="modal-body">
+              <div className="form-grid">
+
+                {/* Date + Receipt# + Bill# */}
+                <div className="form-group"><label>Date</label><input type="date" value={form.receiptDate} onChange={e=>setForm(p=>({...p,receiptDate:e.target.value}))} /></div>
+                <div className="form-group"><label>Receipt #</label><input type="number" value={form.receiptNumber} onChange={e=>setForm(p=>({...p,receiptNumber:e.target.value}))} /></div>
+                <div className="form-group full"><label>Bill Number</label><input value={form.billNumber} onChange={e=>setForm(p=>({...p,billNumber:e.target.value}))} placeholder="SB/26-27/001" /></div>
+
+                {/* Room selector */}
+                <div className="form-group full">
+                  <label>Select Room</label>
+                  <select value={form.roomNumber} onChange={e=>handleRoomChange(e.target.value)}>
+                    <option value="">— Select Room —</option>
+                    {uniqueRooms.map(n=><option key={n} value={n}>Room {n} {members.filter(m=>String(m.roomNumber)===String(n)&&m.isActive!==false).length > 0 ? `(${members.filter(m=>String(m.roomNumber)===String(n)&&m.isActive!==false).length} members)` : '(vacant)'}</option>)}
+                  </select>
+                  {roomConfig && (
+                    <div style={{marginTop:6,padding:'6px 10px',background:'rgba(240,165,0,0.07)',borderRadius:5,fontSize:'0.78rem',color:'var(--text2)',display:'flex',gap:14,flexWrap:'wrap'}}>
+                      <span>🏷️ Fixed Rent: <strong style={{color:'var(--accent)'}}>₹{(roomConfig.rent||0).toLocaleString('en-IN')}</strong></span>
+                      <span>💵 Advance: <strong style={{color:'var(--info)'}}>₹{(roomConfig.advance||0).toLocaleString('en-IN')}</strong></span>
+                      <span>👥 Members: <strong>{roomMembers.length}</strong></span>
+                    </div>
+                  )}
+                </div>
+
+                {/* Member mode selector — only if room selected */}
+                {form.roomNumber && roomMembers.length > 0 && (
+                  <div className="form-group full">
+                    <label>Receipt For</label>
+                    <div style={{display:'flex',gap:0,border:'1px solid var(--border)',borderRadius:6,overflow:'hidden',width:'fit-content'}}>
+                      <button type="button"
+                        style={{padding:'8px 20px',background:form.memberMode==='all'?'var(--accent)':'var(--bg3)',color:form.memberMode==='all'?'#111':'var(--text2)',border:'none',cursor:'pointer',fontFamily:'Rajdhani',fontWeight:700,fontSize:'0.9rem'}}
+                        onClick={()=>handleMemberMode('all')}>
+                        All Members ({roomMembers.length})
+                      </button>
+                      <button type="button"
+                        style={{padding:'8px 20px',background:form.memberMode==='single'?'var(--accent)':'var(--bg3)',color:form.memberMode==='single'?'#111':'var(--text2)',border:'none',cursor:'pointer',fontFamily:'Rajdhani',fontWeight:700,fontSize:'0.9rem',borderLeft:'1px solid var(--border)'}}
+                        onClick={()=>handleMemberMode('single')}>
+                        Single Member
+                      </button>
+                    </div>
+
+                    {/* Show all members list when mode = all */}
+                    {form.memberMode === 'all' && (
+                      <div style={{marginTop:8,background:'var(--bg3)',border:'1px solid var(--border)',borderRadius:6,padding:'10px 12px'}}>
+                        {roomMembers.map((m,i)=>(
+                          <div key={m._id} style={{display:'flex',justifyContent:'space-between',padding:'4px 0',fontSize:'0.83rem',borderBottom:i<roomMembers.length-1?'1px dashed var(--border)':'none'}}>
+                            <span style={{color:'var(--text)',fontWeight:500}}>👤 {m.name}</span>
+                            <span style={{color:'var(--text3)'}}>📱 {m.mobileNo}</span>
                           </div>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        </div>
-      )}
+                        ))}
+                      </div>
+                    )}
 
-      {/* ════════════════════════════════════════════════════════
-          ROOMS TAB
-      ════════════════════════════════════════════════════════ */}
-      {tab === 'rooms' && (
-        <div style={{display:'flex',flexDirection:'column',gap:14}}>
-          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:14}}>
-            <div className="card">
-              <SH title="Room Revenue Comparison" />
-              <ResponsiveContainer width="100%" height={230}>
-                <BarChart data={roomRevenue} margin={{top:4,right:4,left:0,bottom:0}}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false} />
-                  <XAxis dataKey="label" tick={{fill:'var(--text3)',fontSize:11}} axisLine={false} tickLine={false} />
-                  <YAxis tick={{fill:'var(--text3)',fontSize:11}} axisLine={false} tickLine={false} tickFormatter={fmtK} />
-                  <Tooltip content={<CT />} />
-                  <Bar dataKey="total" name="Total Revenue" fill={C.gold} radius={[4,4,0,0]} />
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
-            <div className="card">
-              <SH title="Electric Consumption Ranking" />
-              <ResponsiveContainer width="100%" height={230}>
-                <BarChart data={elecByRoom} margin={{top:4,right:4,left:0,bottom:0}}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false} />
-                  <XAxis dataKey="label" tick={{fill:'var(--text3)',fontSize:11}} axisLine={false} tickLine={false} />
-                  <YAxis tick={{fill:'var(--text3)',fontSize:11}} axisLine={false} tickLine={false} />
-                  <Tooltip formatter={(v,n)=>n==='units'?`${v} units`:`₹${fmt(v)}`} contentStyle={{background:'var(--bg2)',border:'1px solid var(--border2)',borderRadius:8,fontSize:'0.8rem'}} />
-                  <Bar dataKey="units" name="units consumed" fill={C.blue} radius={[4,4,0,0]} />
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
-          </div>
-          <div className="card">
-            <SH title="Room Summary Table" />
-            <div className="table-wrap">
-              <table>
-                <thead><tr><th>Room</th><th>Members</th><th>Fixed Rent</th><th>Rent Collected</th><th>Electric</th><th>Advance</th><th>Total Paid</th><th>Payments</th></tr></thead>
-                <tbody>
-                  {Array.from({length:maxRooms},(_,i)=>i+1).map(rn => {
-                    const rr = receipts.filter(r=>r.roomNumber===rn);
-                    const rm = activeMembers.filter(m=>m.roomNumber===rn);
-                    if (rr.length===0 && rm.length===0) return null;
-                    return (
-                      <tr key={rn}>
-                        <td><span className="badge badge-blue">Room {rn}</span></td>
-                        <td style={{fontSize:'0.8rem',color:'var(--text2)'}}>{rm.map(m=>m.name).join(', ')||'—'}</td>
-                        <td>{rm[0]?.rent ? `₹${fmt(rm[0].rent)}` : '—'}</td>
-                        <td>₹{fmt(rr.reduce((s,r)=>s+(r.rent||0),0))}</td>
-                        <td>₹{fmt(rr.reduce((s,r)=>s+(r.electric||0),0))}</td>
-                        <td>₹{fmt(rr.reduce((s,r)=>s+(r.advance||0),0))}</td>
-                        <td style={{color:'var(--accent)',fontWeight:700}}>₹{fmt(rr.reduce((s,r)=>s+(r.amountPaid||r.totalAmount||0),0))}</td>
-                        <td style={{color:'var(--text3)'}}>{rr.length}</td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        </div>
-      )}
+                    {/* Single member selector */}
+                    {form.memberMode === 'single' && (
+                      <select style={{marginTop:8,width:'100%',background:'var(--bg3)',border:'1px solid var(--border)',borderRadius:6,padding:'9px 12px',color:'var(--text)',outline:'none'}}
+                        value={form.memberName} onChange={e=>handleSingleMember(e.target.value)}>
+                        <option value="">— Select Member —</option>
+                        {roomMembers.map(m=><option key={m._id} value={m.name}>{m.name} · {m.mobileNo}</option>)}
+                      </select>
+                    )}
+                  </div>
+                )}
 
-      {/* ════════════════════════════════════════════════════════
-          PAYMENTS TAB
-      ════════════════════════════════════════════════════════ */}
-      {tab === 'payments' && (
-        <div className="card">
-          <div style={{display:'flex',gap:8,marginBottom:14,flexWrap:'wrap',alignItems:'center'}}>
-            <input value={filters.search} onChange={e=>setFilters(p=>({...p,search:e.target.value}))} placeholder="Search member / bill..." style={selStyle} />
-            <select style={selStyle} value={filters.room} onChange={e=>setFilters(p=>({...p,room:e.target.value}))}>
-              <option value="">All Rooms</option>
-              {Array.from({length:maxRooms},(_,i)=>i+1).map(n=><option key={n} value={n}>Room {n}</option>)}
-            </select>
-            <select style={selStyle} value={filters.mode} onChange={e=>setFilters(p=>({...p,mode:e.target.value}))}>
-              <option value="">All Modes</option>
-              <option value="cash">Cash</option>
-              <option value="online">Online</option>
-            </select>
-            <select style={selStyle} value={filters.type} onChange={e=>setFilters(p=>({...p,type:e.target.value}))}>
-              <option value="">All Types</option>
-              <option value="rent">Rent</option>
-              <option value="advance">Advance</option>
-              <option value="electric">Electric</option>
-              <option value="final">Final Bill</option>
-              <option value="other">Other</option>
-            </select>
-            <select style={selStyle} value={filters.partPay} onChange={e=>setFilters(p=>({...p,partPay:e.target.value}))}>
-              <option value="">All Payments</option>
-              <option value="yes">Part Payments Only</option>
-              <option value="no">Full Payments Only</option>
-            </select>
-            <input type="date" style={selStyle} value={filters.from} onChange={e=>setFilters(p=>({...p,from:e.target.value}))} title="From date" />
-            <input type="date" style={selStyle} value={filters.to}   onChange={e=>setFilters(p=>({...p,to:e.target.value}))}   title="To date"   />
-            <div style={{marginLeft:'auto',display:'flex',gap:8,alignItems:'center'}}>
-              <span style={{color:'var(--accent)',fontFamily:'Rajdhani',fontWeight:700}}>₹{fmt(filteredReceipts.reduce((s,r)=>s+(r.amountPaid||r.totalAmount||0),0))}</span>
-              <button className="btn btn-secondary btn-xs" onClick={exportFilteredCSV}>📥 CSV</button>
-            </div>
-          </div>
-          <div className="table-wrap">
-            <table>
-              <thead><tr><th>Date</th><th>Bill No</th><th>Room</th><th>Member</th><th>Type</th><th>Mode</th><th>Total</th><th>Paid</th><th style={{color:'var(--danger)'}}>Balance</th></tr></thead>
-              <tbody>
-                {filteredReceipts.length===0 ? (
-                  <tr><td colSpan={9}><div className="empty-state"><div className="empty-icon">🧾</div><p>No records found</p></div></td></tr>
-                ) : filteredReceipts.map(r=>(
-                  <tr key={r._id}>
-                    <td style={{fontSize:'0.8rem'}}>{new Date(r.receiptDate).toLocaleDateString('en-IN')}</td>
-                    <td style={{fontFamily:'monospace',fontSize:'0.78rem',color:'var(--text3)'}}>{r.billNumber||'—'}</td>
-                    <td><span className="badge badge-blue">R{r.roomNumber}</span></td>
-                    <td style={{fontWeight:500}}>{r.memberName||'—'}</td>
-                    <td>
-                      <span className="badge badge-yellow">{r.packageName}</span>
-                      {r.isPartPayment && <span style={{marginLeft:4,fontSize:'0.65rem',background:'rgba(243,156,18,0.15)',color:C.orange,padding:'1px 6px',borderRadius:8}}>Part</span>}
-                    </td>
-                    <td><span className={`badge ${r.modeOfPayment==='cash'?'badge-green':'badge-blue'}`}>{r.modeOfPayment}</span></td>
-                    <td style={{fontWeight:600}}>₹{fmt(r.totalAmount)}</td>
-                    <td style={{color:C.green,fontWeight:600}}>₹{fmt(r.amountPaid||r.totalAmount)}</td>
-                    <td style={{color:(r.balanceDue||0)>0?C.red:'var(--text3)',fontWeight:(r.balanceDue||0)>0?700:400}}>
-                      {(r.balanceDue||0)>0?`₹${fmt(r.balanceDue)}`:'—'}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
+                {/* Billing month */}
+                <div className="form-group">
+                  <label>Billing Month <span style={{fontSize:'0.68rem',color:'var(--text3)',fontWeight:400,textTransform:'none'}}>— for electric lookup</span></label>
+                  <select value={form.billingMonth} onChange={e=>setForm(p=>({...p,billingMonth:e.target.value}))}>
+                    <option value="">— Select Month —</option>
+                    {billingMonthOptions.map(o=><option key={o.val} value={o.val}>{o.label}</option>)}
+                  </select>
+                </div>
 
-      {/* ════════════════════════════════════════════════════════
-          MEMBERS TAB
-      ════════════════════════════════════════════════════════ */}
-      {tab === 'members' && (
-        <div className="card">
-          <div className="table-wrap">
-            <table>
-              <thead><tr><th>ID</th><th>Name</th><th>Mobile</th><th>Room</th><th>Join</th><th>Leaving</th><th>Rent</th><th>Police</th><th>Status</th></tr></thead>
-              <tbody>
-                {members.length===0 ? (
-                  <tr><td colSpan={9}><div className="empty-state"><div className="empty-icon">👥</div><p>No members</p></div></td></tr>
-                ) : members.map(m=>(
-                  <tr key={m._id}>
-                    <td style={{fontFamily:'monospace',fontSize:'0.76rem',color:'var(--accent)'}}>{m.memberId||'—'}</td>
-                    <td style={{fontWeight:500}}>{m.name}</td>
-                    <td style={{fontSize:'0.82rem'}}>{m.mobileNo}</td>
-                    <td>{m.roomNumber?<span className="badge badge-blue">R{m.roomNumber}</span>:'—'}</td>
-                    <td style={{fontSize:'0.8rem'}}>{m.roomJoinDate?new Date(m.roomJoinDate).toLocaleDateString('en-IN'):'—'}</td>
-                    <td style={{fontSize:'0.8rem',color:m.roomLeavingDate&&new Date(m.roomLeavingDate)<new Date()?C.red:'inherit'}}>
-                      {m.roomLeavingDate?new Date(m.roomLeavingDate).toLocaleDateString('en-IN'):'—'}
-                    </td>
-                    <td>₹{fmt(m.rent)}</td>
-                    <td><span className={`badge ${m.policeFormVerified?'badge-green':'badge-red'}`}>{m.policeFormVerified?'Done':'Pending'}</span></td>
-                    <td><span className={`badge ${m.isActive!==false?'badge-green':'badge-red'}`}>{m.isActive!==false?'Active':'Archived'}</span></td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
+                {/* Package */}
+                <div className="form-group">
+                  <label>Package Type</label>
+                  <select value={form.packageName} onChange={e=>handlePackageChange(e.target.value)}>
+                    {Object.entries(PKG).map(([k,v])=><option key={k} value={k}>{v}</option>)}
+                  </select>
+                </div>
 
-      {/* ════════════════════════════════════════════════════════
-          EXPORT TAB
-      ════════════════════════════════════════════════════════ */}
-      {tab === 'export' && (
-        <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(280px,1fr))',gap:14}}>
-          {[
-            { key:'members',  label:'Members',          icon:'👥', desc:'All member records — names, rooms, contacts, aadhar, dates' },
-            { key:'receipts', label:'Receipts',          icon:'🧾', desc:'All payment receipts with amounts, dates, modes' },
-            { key:'electric', label:'Electric',          icon:'⚡', desc:'Room-wise electricity readings and bills' },
-            { key:'salary',   label:'Salary & Expenses', icon:'💰', desc:'Staff salaries and maintenance records' },
-          ].map(c=>(
-            <div key={c.key} className="card" style={{display:'flex',flexDirection:'column',gap:14}}>
-              <div style={{fontSize:'2rem'}}>{c.icon}</div>
-              <div>
-                <div style={{fontWeight:700,color:'var(--text)',fontSize:'1rem',marginBottom:4}}>{c.label}</div>
-                <div style={{fontSize:'0.8rem',color:'var(--text3)'}}>{c.desc}</div>
+                {/* Mode */}
+                <div className="form-group">
+                  <label>Payment Mode</label>
+                  <select value={form.modeOfPayment} onChange={e=>setForm(p=>({...p,modeOfPayment:e.target.value}))}>
+                    <option value="cash">Cash / नगद</option>
+                    <option value="online">Online / ऑनलाइन</option>
+                  </select>
+                </div>
+
+                {/* From / To */}
+                <div className="form-group"><label>From Period</label><input type="date" value={form.fromDate} onChange={e=>setForm(p=>({...p,fromDate:e.target.value}))} /></div>
+                <div className="form-group">
+                  <label>To Period <span style={{fontSize:'0.68rem',color:'var(--success)',fontWeight:400,textTransform:'none'}}>— updates member due date</span></label>
+                  <input type="date" value={form.toDate} onChange={e=>setForm(p=>({...p,toDate:e.target.value}))} />
+                </div>
+
+                {/* Amount */}
+                <div className="form-group">
+                  <label>Total Amount (₹)</label>
+                  <input type="number" value={form.totalAmount}
+                    onChange={e=>setForm(p=>({...p, totalAmount:e.target.value, amountPaid:p.isPartPayment?p.amountPaid:e.target.value}))}
+                    placeholder="Auto-filled from room config" />
+                </div>
+
+                {/* Part payment */}
+                <div className="form-group">
+                  <label>Part Payment?</label>
+                  <div style={{display:'flex',alignItems:'center',gap:10,padding:'10px 0'}}>
+                    <input type="checkbox" checked={form.isPartPayment} onChange={e=>handlePartPayment(e.target.checked)} id="partPay" style={{width:18,height:18,accentColor:'var(--accent)',cursor:'pointer'}} />
+                    <label htmlFor="partPay" style={{textTransform:'none',color:'var(--text)',fontSize:'0.88rem',cursor:'pointer',fontWeight:400}}>Member paying partial amount</label>
+                  </div>
+                </div>
+
+                {form.isPartPayment && (
+                  <>
+                    <div className="form-group">
+                      <label>Amount Paid Now (₹)</label>
+                      <input type="number" value={form.amountPaid} onChange={e=>handleAmountPaidChange(e.target.value)} placeholder="Amount received today" />
+                    </div>
+                    <div className="form-group">
+                      <label>Balance Due (₹)</label>
+                      <div style={{padding:'10px 12px',background:'var(--bg3)',border:'1px solid rgba(231,76,60,0.4)',borderRadius:6,fontFamily:'Rajdhani',fontSize:'1.2rem',fontWeight:700,color:parseFloat(form.balanceDue)>0?'var(--danger)':'var(--success)'}}>
+                        ₹{(parseFloat(form.balanceDue)||0).toLocaleString('en-IN')}
+                      </div>
+                    </div>
+                  </>
+                )}
+
+                {/* Amount in words */}
+                <div className="form-group full">
+                  <label>Amount in Words</label>
+                  <input value={(form.isPartPayment?form.amountPaid:form.totalAmount)?numberToWords(parseFloat(form.isPartPayment?form.amountPaid:form.totalAmount)||0)+' Rupees Only':''} readOnly style={{background:'var(--bg)',cursor:'default',fontSize:'0.8rem'}} />
+                </div>
+
+                <div className="form-group full">
+                  <label>Notes</label>
+                  <div style={{display:'flex',gap:6,alignItems:'center'}}>
+                    <input value={form.notes} onChange={e=>setForm(p=>({...p,notes:e.target.value}))} placeholder="Auto-filled for electric and final types" style={{flex:1}} />
+                    {/* F7: AI note generator — only show when room + amount are filled */}
+                    {form.roomNumber && form.totalAmount && (
+                      <button type="button" onClick={generateAINote} disabled={aiNotesLoading}
+                        title="Generate professional note using AI"
+                        style={{flexShrink:0,padding:'9px 12px',background:'linear-gradient(135deg,#667eea,#764ba2)',color:'white',border:'none',borderRadius:7,cursor:aiNotesLoading?'wait':'pointer',fontSize:'0.78rem',fontWeight:700,whiteSpace:'nowrap',opacity:aiNotesLoading?0.7:1}}>
+                        {aiNotesLoading ? '⏳' : '✨ Auto'}
+                      </button>
+                    )}
+                  </div>
+                </div>
               </div>
-              <button className="btn btn-secondary" onClick={()=>exportCSV(c.key)} disabled={!!exporting} style={{marginTop:'auto'}}>
-                {exporting===c.key?'⏳ Exporting...':'📥 Download CSV (Excel)'}
+            </div>
+            <div className="modal-footer">
+              <button className="btn btn-secondary" onClick={()=>setShowModal(false)}>Cancel</button>
+              <button className="btn btn-primary" onClick={save}>Generate Receipt</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Print Modal */}
+      {showPrint && (
+        <div className="modal-overlay" onClick={e=>e.target===e.currentTarget&&setShowPrint(null)}>
+          <div className="modal" style={{maxWidth:560}}>
+            <div className="modal-header">
+              <h3>Receipt — {showPrint.billNumber}</h3>
+              <button className="close-btn" onClick={()=>setShowPrint(null)}>✕</button>
+            </div>
+            <div className="modal-body" style={{background:'white'}}>
+              <div ref={printRef}><ReceiptPrint receipt={showPrint} /></div>
+            </div>
+            <div className="modal-footer" style={{flexWrap:'wrap',gap:8}}>
+              <button className="btn btn-secondary" onClick={()=>setShowPrint(null)}>Close</button>
+              <button className="btn btn-primary" onClick={doPrint}>🖨 Print / PDF</button>
+              {showPrint?.memberMobile && (
+                <button style={{background:'#25d366',color:'white',border:'none',padding:'9px 16px',borderRadius:7,cursor:'pointer',fontWeight:700,fontSize:'0.88rem',fontFamily:'Rajdhani'}}
+                  onClick={()=>whatsapp.sendReceipt(showPrint.memberMobile,showPrint)}>📱 WhatsApp</button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Due Receipt Modal ──────────────────────────────────────────────── */}
+      {dueModal && (
+        <div className="modal-overlay" onClick={e=>e.target===e.currentTarget&&setDueModal(null)}>
+          <div className="modal" style={{maxWidth:460}}>
+            <div className="modal-header">
+              <h3>⚠️ Generate Due Receipt</h3>
+              <button className="close-btn" onClick={()=>setDueModal(null)}>✕</button>
+            </div>
+            <div className="modal-body">
+              <div style={{background:'rgba(243,156,18,0.08)',border:'1px solid rgba(243,156,18,0.4)',borderRadius:6,padding:'12px 14px',marginBottom:16,fontSize:'0.88rem'}}>
+                <strong>{dueModal.memberName}</strong> · Room {dueModal.roomNumber}<br/>
+                <span style={{color:'var(--text2)',fontSize:'0.8rem'}}>Original Bill: <strong>{dueModal.billNumber}</strong></span><br/>
+                <div style={{marginTop:8,display:'flex',justifyContent:'space-between'}}>
+                  <span>Total Bill: ₹{(dueModal.totalAmount||0).toLocaleString('en-IN')}</span>
+                  <span>Already Paid: ₹{(dueModal.amountPaid||0).toLocaleString('en-IN')}</span>
+                </div>
+                <div style={{marginTop:6,fontFamily:'Rajdhani',fontSize:'1.2rem',fontWeight:700,color:'#c0392b'}}>
+                  Balance Due: ₹{(dueModal.balanceDue||0).toLocaleString('en-IN')}
+                </div>
+              </div>
+              <div className="form-grid">
+                <div className="form-group">
+                  <label>Payment Mode</label>
+                  <select value={dueForm.modeOfPayment} onChange={e=>setDueForm(p=>({...p,modeOfPayment:e.target.value}))}>
+                    <option value="cash">Cash / नगद</option>
+                    <option value="online">Online / ऑनलाइन</option>
+                  </select>
+                </div>
+                <div className="form-group">
+                  <label>Receipt Date</label>
+                  <input type="date" value={dueForm.receiptDate} onChange={e=>setDueForm(p=>({...p,receiptDate:e.target.value}))} />
+                </div>
+                <div className="form-group full">
+                  <label>Notes (optional)</label>
+                  <input value={dueForm.notes} onChange={e=>setDueForm(p=>({...p,notes:e.target.value}))} placeholder={`Due clearance against ${dueModal.billNumber}`} />
+                </div>
+              </div>
+            </div>
+            <div className="modal-footer">
+              <button className="btn btn-secondary" onClick={()=>setDueModal(null)}>Cancel</button>
+              <button className="btn btn-primary" onClick={saveDueReceipt}
+                style={{background:'#e67e22',border:'1px solid #d35400'}}>
+                Generate Due Receipt — ₹{(dueModal.balanceDue||0).toLocaleString('en-IN')}
               </button>
             </div>
-          ))}
-          <div className="card" style={{display:'flex',flexDirection:'column',gap:14,border:'1px solid rgba(240,165,0,0.3)'}}>
-            <div style={{fontSize:'2rem'}}>💾</div>
-            <div>
-              <div style={{fontWeight:700,color:'var(--text)',fontSize:'1rem',marginBottom:4}}>Full Database Backup</div>
-              <div style={{fontSize:'0.8rem',color:'var(--text3)'}}>Complete encrypted JSON backup of all data.</div>
-            </div>
-            <button className="btn btn-primary" onClick={exportJSON} disabled={!!exporting} style={{marginTop:'auto'}}>
-              {exporting==='json'?'⏳ Generating...':'💾 Download Full Backup'}
-            </button>
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+function ReceiptPrint({ receipt }) {
+  const fmt = d => d ? new Date(d).toLocaleDateString('en-IN',{day:'2-digit',month:'long',year:'numeric'}) : '—';
+  const paidAmt  = receipt.isPartPayment ? (receipt.amountPaid||0) : (receipt.totalAmount||0);
+  const words    = receipt.amountInWords || (numberToWords(paidAmt)+' Rupees Only');
+  const isPartPay= receipt.isPartPayment && (receipt.balanceDue||0) > 0;
+  const PKGl     = { rent:'Rent / किराया', advance:'Advance / एडवांस', electric:'Electric / बिजली', final:'Final Bill / अंतिम', other:'Other / अन्य' };
+  const membersList = receipt.members?.length > 0
+    ? receipt.members.map(m=>m.name).join(', ')
+    : receipt.memberName || '—';
+
+  return (
+    <div style={{fontFamily:'"Noto Sans",sans-serif',background:'white',color:'#111',padding:'28px',fontSize:'13px'}}>
+      <div style={{textAlign:'center',borderBottom:'2px solid #111',paddingBottom:12,marginBottom:16}}>
+        <div style={{fontSize:'1.5rem',fontWeight:700,letterSpacing:1}}>HOSTEL MANAGER</div>
+        <div style={{fontSize:'0.75rem',color:'#555',letterSpacing:'0.1em',textTransform:'uppercase'}}>
+          {isPartPay ? 'Part Payment Receipt' : 'Payment Receipt / भुगतान रसीद'}
+        </div>
+      </div>
+      <div style={{display:'flex',justifyContent:'space-between',marginBottom:10}}>
+        <div><span style={{color:'#555'}}>Date: </span><strong>{fmt(receipt.receiptDate)}</strong></div>
+        <div><span style={{color:'#555'}}>Receipt #</span><strong>{receipt.receiptNumber}</strong></div>
+      </div>
+      <div style={{marginBottom:12}}><span style={{color:'#555'}}>Bill No.: </span><strong style={{fontSize:'1rem',color:'#c00'}}>{receipt.billNumber||'—'}</strong></div>
+      {[
+        ['Members / सदस्य', membersList],
+        ['Room / कमरा', receipt.roomNumber ? `Room ${receipt.roomNumber}` : '—'],
+        ['Package / पैकेज', PKGl[receipt.packageName]||receipt.packageName],
+        ['From / दिनांक से', fmt(receipt.fromDate)],
+        ['To / दिनांक तक', fmt(receipt.toDate)],
+        ['Mode / भुगतान', receipt.modeOfPayment==='online'?'Online / ऑनलाइन':'Cash / नगद'],
+      ].map(([l,v],i)=>(
+        <div key={i} style={{display:'flex',justifyContent:'space-between',padding:'5px 0',borderBottom:'1px dashed #ddd'}}>
+          <span style={{color:'#555'}}>{l}</span><span style={{fontWeight:500}}>{v}</span>
+        </div>
+      ))}
+      {isPartPay && (
+        <div style={{margin:'12px 0',padding:'10px',background:'#fff8e1',border:'1px solid #f39c12',borderRadius:4}}>
+          <div style={{display:'flex',justifyContent:'space-between',marginBottom:4}}><span style={{color:'#555'}}>Total Bill</span><span style={{fontWeight:600}}>₹{(receipt.totalAmount||0).toLocaleString('en-IN')}</span></div>
+          <div style={{display:'flex',justifyContent:'space-between',marginBottom:4}}><span style={{color:'#555'}}>Paid Today</span><span style={{fontWeight:700,color:'#27ae60'}}>₹{paidAmt.toLocaleString('en-IN')}</span></div>
+          <div style={{display:'flex',justifyContent:'space-between',borderTop:'1px solid #f39c12',paddingTop:6,marginTop:4}}><span style={{color:'#c00',fontWeight:700}}>Balance Due</span><span style={{fontWeight:700,color:'#c00'}}>₹{(receipt.balanceDue||0).toLocaleString('en-IN')}</span></div>
+        </div>
+      )}
+      <div style={{margin:'14px 0',padding:'10px',background:'#f9f9f9',border:'1px solid #ddd',borderRadius:4}}>
+        <div style={{fontSize:'11px',color:'#777',textTransform:'uppercase',letterSpacing:1,marginBottom:3}}>Sum of Rupees Paid / भुगतान राशि शब्दों में</div>
+        <div style={{fontSize:'1rem',fontWeight:600,color:'#222'}}>{words}</div>
+      </div>
+      <div style={{textAlign:'center',padding:'14px',background:'#111',color:'white',borderRadius:6,margin:'10px 0'}}>
+        <div style={{fontSize:'11px',letterSpacing:'0.15em',textTransform:'uppercase',marginBottom:3,opacity:0.7}}>AMOUNT PAID</div>
+        <div style={{fontSize:'2rem',fontWeight:900}}>₹{paidAmt.toLocaleString('en-IN')}</div>
+        {isPartPay && <div style={{fontSize:'0.75rem',opacity:0.7,marginTop:3}}>Part Payment · Balance: ₹{(receipt.balanceDue||0).toLocaleString('en-IN')}</div>}
+      </div>
+      <div style={{display:'flex',justifyContent:'flex-end',marginTop:28}}>
+        <div style={{width:180,textAlign:'center'}}>
+          <div style={{borderTop:'1px solid #333',paddingTop:6,fontSize:'12px',color:'#555'}}>हस्ताक्षर / Signature</div>
+        </div>
+      </div>
+      {receipt.notes && <div style={{marginTop:10,fontSize:'11px',color:'#777'}}>Note: {receipt.notes}</div>}
     </div>
   );
 }

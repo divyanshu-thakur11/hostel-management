@@ -29,22 +29,21 @@ const ALLOWED_COLLECTIONS = ['receipts', 'members'];
 const BLOCKED_STAGES = ['$out','$merge','$indexStats','$currentOp','$planCacheStats','$lookup','$function','$accumulator'];
 const https = require('https');
 
-function callAnthropic(systemPrompt, userMessage) {
+// F8: Gemini free tier — replaces Anthropic
+function callGemini(systemPrompt, userMessage) {
   return new Promise((resolve, reject) => {
-    const body = JSON.stringify({
-      model: 'claude-sonnet-4-20250514',
-      max_tokens: 600,
-      system: systemPrompt,
-      messages: [{ role: 'user', content: userMessage }],
+    const apiKey = process.env.GEMINI_API_KEY || '';
+    const body   = JSON.stringify({
+      system_instruction: { parts: [{ text: systemPrompt }] },
+      contents: [{ role: 'user', parts: [{ text: userMessage }] }],
+      generationConfig: { maxOutputTokens: 600, temperature: 0.1 },
     });
     const req = https.request({
-      hostname: 'api.anthropic.com',
-      path: '/v1/messages',
+      hostname: 'generativelanguage.googleapis.com',
+      path: `/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`,
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'x-api-key': process.env.ANTHROPIC_API_KEY || '',
-        'anthropic-version': '2023-06-01',
         'Content-Length': Buffer.byteLength(body),
       },
     }, (res) => {
@@ -53,22 +52,14 @@ function callAnthropic(systemPrompt, userMessage) {
       res.on('end', () => {
         let parsed;
         try { parsed = JSON.parse(data); }
-        catch(e) { return reject(new Error('Invalid JSON from Anthropic: ' + data.slice(0, 200))); }
-
-        // Anthropic error response (auth failure, rate limit, etc.)
-        if (parsed.type === 'error' || parsed.error) {
-          const msg = parsed.error?.message || parsed.error?.type || JSON.stringify(parsed.error);
-          return reject(new Error('Anthropic API error: ' + msg));
-        }
-        // HTTP-level error status
-        if (res.statusCode >= 400) {
-          return reject(new Error(`Anthropic HTTP ${res.statusCode}: ${data.slice(0, 200)}`));
-        }
+        catch(e) { return reject(new Error('Invalid JSON from Gemini: ' + data.slice(0, 200))); }
+        if (parsed.error) return reject(new Error('Gemini API error: ' + (parsed.error.message || JSON.stringify(parsed.error))));
+        if (res.statusCode >= 400) return reject(new Error(`Gemini HTTP ${res.statusCode}: ${data.slice(0, 200)}`));
         resolve(parsed);
       });
     });
     req.on('error', reject);
-    req.setTimeout(20000, () => { req.destroy(); reject(new Error('Anthropic request timed out')); });
+    req.setTimeout(20000, () => { req.destroy(); reject(new Error('Gemini request timed out')); });
     req.write(body);
     req.end();
   });
@@ -78,7 +69,7 @@ router.post('/nl-query', async (req, res) => {
   try {
     const { query } = req.body;
     if (!query || typeof query !== 'string') return res.status(400).json({ message: 'Query required' });
-    if (!process.env.ANTHROPIC_API_KEY) return res.status(503).json({ message: 'ANTHROPIC_API_KEY not configured on server' });
+    if (!process.env.GEMINI_API_KEY) return res.status(503).json({ message: 'GEMINI_API_KEY not configured on server. Add it in Render → Environment.' });
 
     const system = `You are a MongoDB aggregation pipeline generator for a hostel management system.
 Collections available:
@@ -100,12 +91,12 @@ A: {"collection":"receipts","pipeline":[{"$match":{"balanceDue":{"$gt":0}}},{"$g
 Q: show members without police verification
 A: {"collection":"members","pipeline":[{"$match":{"policeFormVerified":{"$ne":true},"isActive":{"$ne":false}}},{"$project":{"name":1,"roomNumber":1,"mobileNo":1,"admissionDate":1}},{"$limit":20}]}`;
 
-    const aiResp = await callAnthropic(system, query);
-    console.log('Anthropic response type:', aiResp.type, '| content blocks:', aiResp.content?.length);
-    const raw = aiResp.content?.[0]?.text?.trim();
+    const aiResp = await callGemini(system, query);
+    // Gemini response: candidates[0].content.parts[0].text
+    const raw = aiResp.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
     if (!raw) {
-      console.error('Anthropic full response:', JSON.stringify(aiResp).slice(0, 500));
-      return res.status(502).json({ message: 'Empty response from AI — check Render logs for details' });
+      console.error('Gemini full response:', JSON.stringify(aiResp).slice(0, 500));
+      return res.status(502).json({ message: 'Empty response from Gemini — check Render logs' });
     }
 
     let parsed;
@@ -174,6 +165,23 @@ router.post('/query', async (req, res) => {
     const result = await Model.aggregate(safePipeline);
     res.json(result);
   } catch(err) { res.status(400).json({ message: 'Query failed: ' + err.message }); }
+});
+
+// F7: AI receipt note generator — server-side Gemini call (keeps API key secure)
+router.post('/generate-note', async (req, res) => {
+  try {
+    if (!process.env.GEMINI_API_KEY)
+      return res.status(503).json({ message: 'GEMINI_API_KEY not configured' });
+    const { memberName, roomNumber, packageName, totalAmount, modeOfPayment, isPartPayment, balanceDue } = req.body;
+    const prompt = `Member: ${memberName}, Room: ${roomNumber}, Type: ${packageName}, Amount: ₹${totalAmount}, Mode: ${modeOfPayment}, Part payment: ${isPartPayment ? 'yes' : 'no'}${isPartPayment && balanceDue > 0 ? `, Due: ₹${balanceDue}` : ''}`;
+    const system = 'You are a hostel receipt assistant. Write one short professional receipt note in 1-2 sentences. Return only the note — no quotes, no markdown, no explanation.';
+    const aiResp = await callGemini(system, prompt);
+    const note   = aiResp.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
+    if (!note) return res.status(502).json({ message: 'No note generated' });
+    res.json({ note });
+  } catch(err) {
+    res.status(500).json({ message: err.message || 'Failed to generate note' });
+  }
 });
 
 module.exports = router;

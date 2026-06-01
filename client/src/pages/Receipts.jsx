@@ -209,19 +209,12 @@ export default function Receipts() {
       const memberName = form.memberMode === 'all'
         ? (roomMembers.map(m => m.name).join(', ') || 'All members')
         : (form.memberName || 'Member');
-      const prompt = `Member: ${memberName}, Room: ${form.roomNumber}, Type: ${form.packageName}, Amount: ₹${form.totalAmount}, Mode: ${form.modeOfPayment}, Part payment: ${form.isPartPayment ? 'yes' : 'no'}${form.isPartPayment && form.balanceDue > 0 ? `, Due: ₹${form.balanceDue}` : ''}`;
-      const resp = await fetch('https://api.anthropic.com/v1/messages', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          model: 'claude-sonnet-4-20250514',
-          max_tokens: 150,
-          system: 'You are a hostel receipt assistant. Write one short professional receipt note in 1-2 sentences. Return only the note, no quotes.',
-          messages: [{ role: 'user', content: prompt }],
-        }),
+      const resp = await receiptsAPI.generateNote({
+        memberName, roomNumber: form.roomNumber, packageName: form.packageName,
+        totalAmount: form.totalAmount, modeOfPayment: form.modeOfPayment,
+        isPartPayment: form.isPartPayment, balanceDue: form.balanceDue || 0,
       });
-      const data = await resp.json();
-      const note = data.content?.[0]?.text;
+      const note = resp.data?.note;
       if (note) setForm(p => ({ ...p, notes: note }));
       else toast('Could not generate note', 'error');
     } catch(_) { toast('Could not generate note', 'error'); }

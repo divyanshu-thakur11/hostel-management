@@ -30,17 +30,23 @@ const BLOCKED_STAGES = ['$out','$merge','$indexStats','$currentOp','$planCacheSt
 const https = require('https');
 
 // F8: Gemini free tier — replaces Anthropic
-function callGemini(systemPrompt, userMessage) {
+const GEMINI_MODELS = [
+  'gemini-2.0-flash',
+  'gemini-1.5-flash',
+  'gemini-1.5-flash-latest',
+  'gemini-pro',
+];
+
+function callGeminiModel(model, systemPrompt, userMessage, apiKey) {
   return new Promise((resolve, reject) => {
-    const apiKey = process.env.GEMINI_API_KEY || '';
-    const body   = JSON.stringify({
+    const body = JSON.stringify({
       system_instruction: { parts: [{ text: systemPrompt }] },
       contents: [{ role: 'user', parts: [{ text: userMessage }] }],
       generationConfig: { maxOutputTokens: 600, temperature: 0.1 },
     });
     const req = https.request({
       hostname: 'generativelanguage.googleapis.com',
-      path: `/v1beta/models/gemini-1.5-flash-latest:generateContent?key=${apiKey}`,
+      path: `/v1beta/models/${model}:generateContent?key=${apiKey}`,
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -52,9 +58,9 @@ function callGemini(systemPrompt, userMessage) {
       res.on('end', () => {
         let parsed;
         try { parsed = JSON.parse(data); }
-        catch(e) { return reject(new Error('Invalid JSON from Gemini: ' + data.slice(0, 200))); }
-        if (parsed.error) return reject(new Error('Gemini API error: ' + (parsed.error.message || JSON.stringify(parsed.error))));
-        if (res.statusCode >= 400) return reject(new Error(`Gemini HTTP ${res.statusCode}: ${data.slice(0, 200)}`));
+        catch(e) { return reject(new Error('Invalid JSON from Gemini')); }
+        if (parsed.error) return reject(new Error('MODEL_NOT_FOUND:' + (parsed.error.message || '')));
+        if (res.statusCode >= 400) return reject(new Error('MODEL_NOT_FOUND:HTTP ' + res.statusCode));
         resolve(parsed);
       });
     });
@@ -63,6 +69,25 @@ function callGemini(systemPrompt, userMessage) {
     req.write(body);
     req.end();
   });
+}
+
+async function callGemini(systemPrompt, userMessage) {
+  const apiKey = process.env.GEMINI_API_KEY || '';
+  for (const model of GEMINI_MODELS) {
+    try {
+      console.log(`Trying Gemini model: ${model}`);
+      const result = await callGeminiModel(model, systemPrompt, userMessage, apiKey);
+      console.log(`✓ Gemini model ${model} succeeded`);
+      return result;
+    } catch(err) {
+      if (err.message.startsWith('MODEL_NOT_FOUND:')) {
+        console.log(`✗ Model ${model} not available, trying next...`);
+        continue; // try next model
+      }
+      throw err; // real error, stop trying
+    }
+  }
+  throw new Error('No Gemini model available. Check your API key and try again.');
 }
 
 router.post('/nl-query', async (req, res) => {

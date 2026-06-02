@@ -64,11 +64,6 @@ export default function Reports() {
   const [filters,  setFilters]  = useState({ room:'', mode:'', type:'', search:'', from:'', to:'', partPay:'' });
   const [loading,  setLoading]  = useState(true);
   const [exporting,setExporting]= useState('');
-  // F8: Natural language query
-  const [nlQuery,    setNlQuery]    = useState('');
-  const [nlLoading,  setNlLoading]  = useState(false);
-  const [nlResults,  setNlResults]  = useState(null);
-  const [nlError,    setNlError]    = useState('');
 
   useEffect(() => {
     setLoading(true);
@@ -299,28 +294,6 @@ export default function Reports() {
       `receipts-${new Date().toISOString().split('T')[0]}.csv`, 'text/csv');
   };
 
-  // F8: Natural language query — Anthropic is called server-side
-  const handleNLQuery = async (e) => {
-    e.preventDefault();
-    if (!nlQuery.trim()) return;
-    setNlLoading(true); setNlResults(null); setNlError('');
-    try {
-      const resp    = await receiptsAPI.nlQuery(nlQuery);
-      const results = resp.data?.results ?? resp.data;
-      if (!Array.isArray(results)) throw new Error('Unexpected response shape');
-      setNlResults({ data: results, query: nlQuery });
-    } catch(err) {
-      const serverMsg = err.response?.data?.message || '';
-      if (serverMsg.includes('GEMINI_API_KEY')) {
-        setNlError('GEMINI_API_KEY is not set on the server. Add it in Render → Environment.');
-      } else if (serverMsg) {
-        setNlError(`Server: ${serverMsg}`);
-      } else {
-        setNlError('Could not process query. Try rephrasing.');
-      }
-    } finally { setNlLoading(false); }
-  };
-
   const selStyle = { background:'var(--bg3)', border:'1px solid var(--border)', borderRadius:6, padding:'7px 10px', color:'var(--text)', outline:'none', fontSize:'0.82rem' };
   const StatCard = ({ label, value, color='var(--accent)', sub, icon }) => (
     <div style={{ background:'var(--bg2)', border:'1px solid var(--border)', borderRadius:10, padding:'16px 18px', display:'flex', alignItems:'center', gap:12 }}>
@@ -368,66 +341,6 @@ export default function Reports() {
           <button key={t.id} className={`tab ${tab===t.id?'active':''}`} onClick={()=>setTab(t.id)}>{t.label}</button>
         ))}
       </div>
-
-      {/* F8: Natural Language Query Bar */}
-      <form onSubmit={handleNLQuery} style={{marginBottom:16,display:'flex',gap:8,alignItems:'center',flexWrap:'wrap'}}>
-        <div style={{flex:1,minWidth:260,position:'relative'}}>
-          <input
-            value={nlQuery}
-            onChange={e=>{setNlQuery(e.target.value);setNlError('');setNlResults(null);}}
-            placeholder="✨ Ask anything — e.g. which room has highest dues? or show members with no receipts"
-            style={{width:'100%',background:'var(--bg2)',border:'1px solid rgba(102,126,234,0.4)',borderRadius:8,padding:'10px 14px',color:'var(--text)',outline:'none',fontSize:'0.85rem',boxShadow:'0 0 0 3px rgba(102,126,234,0.06)'}}
-          />
-        </div>
-        <button type="submit" disabled={nlLoading||!nlQuery.trim()}
-          style={{padding:'10px 18px',background:'linear-gradient(135deg,#667eea,#764ba2)',color:'white',border:'none',borderRadius:8,cursor:nlLoading?'wait':'pointer',fontWeight:700,fontSize:'0.85rem',whiteSpace:'nowrap',opacity:nlLoading?0.7:1}}>
-          {nlLoading ? '⏳ Thinking...' : '✨ Ask AI'}
-        </button>
-        {nlResults && <button type="button" onClick={()=>{setNlResults(null);setNlQuery('');}} style={{padding:'10px 12px',background:'var(--bg3)',border:'1px solid var(--border)',borderRadius:8,cursor:'pointer',color:'var(--text3)',fontSize:'0.82rem'}}>✕ Clear</button>}
-      </form>
-
-      {/* NL Query Results */}
-      {nlError && (
-        <div style={{marginBottom:14,padding:'12px 16px',background:'rgba(231,76,60,0.08)',border:'1px solid rgba(231,76,60,0.25)',borderRadius:8,color:'var(--danger)',fontSize:'0.85rem'}}>
-          ⚠️ {nlError}
-        </div>
-      )}
-      {nlResults && nlResults.data?.length >= 0 && (
-        <div className="card" style={{marginBottom:16,border:'1px solid rgba(102,126,234,0.3)'}}>
-          <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:12}}>
-            <div>
-              <div style={{fontFamily:'Rajdhani',fontWeight:700,color:'var(--text)',fontSize:'0.95rem'}}>✨ AI Query Result</div>
-              <div style={{fontSize:'0.72rem',color:'var(--text3)',marginTop:2}}>"{nlResults.query}" — {nlResults.data.length} record{nlResults.data.length!==1?'s':''}</div>
-            </div>
-          </div>
-          {nlResults.data.length === 0 ? (
-            <div style={{color:'var(--text3)',fontSize:'0.85rem',padding:'12px 0'}}>No results found.</div>
-          ) : (
-            <div className="table-wrap">
-              <table>
-                <thead>
-                  <tr>{Object.keys(nlResults.data[0]).filter(k=>!['__v','hostelId'].includes(k)).map(k=><th key={k}>{k}</th>)}</tr>
-                </thead>
-                <tbody>
-                  {nlResults.data.map((row,i)=>(
-                    <tr key={i}>
-                      {Object.entries(row).filter(([k])=>!['__v','hostelId'].includes(k)).map(([k,v])=>(
-                        <td key={k} style={{fontSize:'0.82rem'}}>
-                          {v instanceof Object && !Array.isArray(v) ? JSON.stringify(v) :
-                           Array.isArray(v) ? v.join(', ') :
-                           k.toLowerCase().includes('date') && v ? new Date(v).toLocaleDateString('en-IN') :
-                           k.toLowerCase().includes('amount') || k.toLowerCase().includes('total') || k.toLowerCase().includes('rent') ? (typeof v==='number'?`₹${v.toLocaleString('en-IN')}`:v) :
-                           String(v ?? '—')}
-                        </td>
-                      ))}
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </div>
-      )}
 
       {/* ════════════════════════════════════════════════════════
           OVERVIEW TAB

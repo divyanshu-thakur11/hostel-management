@@ -40,9 +40,8 @@ export default function Receipts() {
   const [showModal, setShowModal]   = useState(false);
   const [showPrint, setShowPrint]   = useState(null);
   const [form, setForm]             = useState(EMPTY);
-  const [dueModal, setDueModal]     = useState(null);   // part-pay receipt to make due receipt for
+  const [dueModal, setDueModal]     = useState(null);
   const [dueForm, setDueForm]       = useState({ modeOfPayment:'cash', receiptDate:'', notes:'' });
-  const [aiNotesLoading, setAiNotesLoading] = useState(false); // F7
   const [loading, setLoading]       = useState(false);
   const [search, setSearch]         = useState('');
   const [roomF, setRoomF]           = useState('');
@@ -199,26 +198,6 @@ export default function Receipts() {
       amountPaid: checked ? '' : p.totalAmount,
       balanceDue: checked ? p.totalAmount : '0',
     }));
-  };
-
-  // F7: AI-generated receipt notes
-  const generateAINote = async () => {
-    if (!form.roomNumber || !form.totalAmount) return;
-    setAiNotesLoading(true);
-    try {
-      const memberName = form.memberMode === 'all'
-        ? (roomMembers.map(m => m.name).join(', ') || 'All members')
-        : (form.memberName || 'Member');
-      const resp = await receiptsAPI.generateNote({
-        memberName, roomNumber: form.roomNumber, packageName: form.packageName,
-        totalAmount: form.totalAmount, modeOfPayment: form.modeOfPayment,
-        isPartPayment: form.isPartPayment, balanceDue: form.balanceDue || 0,
-      });
-      const note = resp.data?.note;
-      if (note) setForm(p => ({ ...p, notes: note }));
-      else toast('Could not generate note', 'error');
-    } catch(_) { toast('Could not generate note', 'error'); }
-    finally { setAiNotesLoading(false); }
   };
 
   // ── Save receipt ──────────────────────────────────────────────────────────
@@ -569,17 +548,7 @@ export default function Receipts() {
 
                 <div className="form-group full">
                   <label>Notes</label>
-                  <div style={{display:'flex',gap:6,alignItems:'center'}}>
-                    <input value={form.notes} onChange={e=>setForm(p=>({...p,notes:e.target.value}))} placeholder="Auto-filled for electric and final types" style={{flex:1}} />
-                    {/* F7: AI note generator — only show when room + amount are filled */}
-                    {form.roomNumber && form.totalAmount && (
-                      <button type="button" onClick={generateAINote} disabled={aiNotesLoading}
-                        title="Generate professional note using AI"
-                        style={{flexShrink:0,padding:'9px 12px',background:'linear-gradient(135deg,#667eea,#764ba2)',color:'white',border:'none',borderRadius:7,cursor:aiNotesLoading?'wait':'pointer',fontSize:'0.78rem',fontWeight:700,whiteSpace:'nowrap',opacity:aiNotesLoading?0.7:1}}>
-                        {aiNotesLoading ? '⏳' : '✨ Auto'}
-                      </button>
-                    )}
-                  </div>
+                  <input value={form.notes} onChange={e=>setForm(p=>({...p,notes:e.target.value}))} placeholder="Auto-filled for electric and final types" />
                 </div>
               </div>
             </div>

@@ -210,3 +210,27 @@ router.post('/generate-note', async (req, res) => {
 });
 
 module.exports = router;
+
+// TEMP DEBUG: list available models — remove after finding correct model name
+router.get('/gemini-models', async (req, res) => {
+  try {
+    const apiKey = process.env.GEMINI_API_KEY || '';
+    const result = await new Promise((resolve, reject) => {
+      const r = https.request({
+        hostname: 'generativelanguage.googleapis.com',
+        path: `/v1beta/models?key=${apiKey}`,
+        method: 'GET',
+      }, (resp) => {
+        let d = '';
+        resp.on('data', c => d += c);
+        resp.on('end', () => { try { resolve(JSON.parse(d)); } catch(e) { resolve({ raw: d }); } });
+      });
+      r.on('error', reject);
+      r.end();
+    });
+    const names = (result.models || [])
+      .filter(m => (m.supportedGenerationMethods || []).includes('generateContent'))
+      .map(m => m.name);
+    res.json({ generateContentModels: names, total: names.length });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});

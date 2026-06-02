@@ -102,10 +102,13 @@ export const salaryAPI = {
 };
 
 export const notificationsAPI = {
-  getAll:       (params) => api.get('/notifications', { params }),
-  markRead:     (id)     => api.put(`/notifications/${id}/read`),
-  markAllRead:  ()       => api.put('/notifications/read-all'),
-  getUnreadCount:()      => api.get('/notifications/unread-count'),
+  getAll:        (params) => api.get('/notifications', { params }),
+  markRead:      (id)     => api.put(`/notifications/${id}/read`),
+  markAllRead:   ()       => api.put('/notifications/read-all'),
+  getUnreadCount:()       => api.get('/notifications/unread-count'),
+  clearRead:     ()       => api.delete('/notifications/clear-read'),
+  clearAll:      ()       => api.delete('/notifications/clear-all'),
+  deleteOne:     (id)     => api.delete(`/notifications/${id}`),
 };
 
 export const auditAPI = {

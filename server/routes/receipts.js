@@ -121,9 +121,7 @@ A: {"collection":"members","pipeline":[{"$match":{"policeFormVerified":{"$ne":tr
 
     let parsed;
     try {
-      // FIX: Regex fixed onto a single line to prevent SyntaxError
-      const cleanedRaw = raw.replace(/```json|```/g, '').trim();
-      parsed = JSON.parse(cleanedRaw);
+      parsed = JSON.parse(raw.replace(/```json|```/g, '').trim());
     } catch(e) {
       return res.status(502).json({ message: 'AI returned invalid JSON. Try rephrasing.' });
     }

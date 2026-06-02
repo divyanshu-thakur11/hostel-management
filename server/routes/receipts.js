@@ -29,27 +29,26 @@ const ALLOWED_COLLECTIONS = ['receipts', 'members'];
 const BLOCKED_STAGES = ['$out','$merge','$indexStats','$currentOp','$planCacheStats','$lookup','$function','$accumulator'];
 const https = require('https');
 
-// F8: Gemini free tier — replaces Anthropic
-const GEMINI_MODELS = [
-  'gemini-2.0-flash',
-  'gemini-2.5-flash',
-  'gemini-flash-latest',
-  'gemini-2.0-flash-lite',
-];
-
-function callGeminiModel(model, systemPrompt, userMessage, apiKey) {
+// F8: Gemini - single reliable function, no fallback complexity
+// Model names from API: strip 'models/' prefix since path already has /models/
+function callGemini(systemPrompt, userMessage) {
   return new Promise((resolve, reject) => {
+    const apiKey = process.env.GEMINI_API_KEY || '';
+    // Use gemini-2.0-flash — confirmed in user's model list
+    const model  = 'gemini-2.0-flash';
+
     const body = JSON.stringify({
       system_instruction: { parts: [{ text: systemPrompt }] },
-      contents: [{ role: 'user', parts: [{ text: userMessage }] }],
-      generationConfig: { maxOutputTokens: 600, temperature: 0.1 },
+      contents:           [{ role: 'user', parts: [{ text: userMessage }] }],
+      generationConfig:   { maxOutputTokens: 600, temperature: 0.1 },
     });
+
     const req = https.request({
       hostname: 'generativelanguage.googleapis.com',
-      path: `/v1beta/models/${model}:generateContent?key=${apiKey}`,
-      method: 'POST',
+      path:     `/v1beta/models/${model}:generateContent?key=${apiKey}`,
+      method:   'POST',
       headers: {
-        'Content-Type': 'application/json',
+        'Content-Type':   'application/json',
         'Content-Length': Buffer.byteLength(body),
       },
     }, (res) => {
@@ -58,36 +57,32 @@ function callGeminiModel(model, systemPrompt, userMessage, apiKey) {
       res.on('end', () => {
         let parsed;
         try { parsed = JSON.parse(data); }
-        catch(e) { return reject(new Error('Invalid JSON from Gemini')); }
-        if (parsed.error) return reject(new Error('MODEL_NOT_FOUND:' + (parsed.error.message || '')));
-        if (res.statusCode >= 400) return reject(new Error('MODEL_NOT_FOUND:HTTP ' + res.statusCode));
+        catch(e) { return reject(new Error('Gemini returned invalid JSON: ' + data.slice(0, 100))); }
+
+        // Always log full response to Render logs for debugging
+        if (res.statusCode !== 200) {
+          console.error(`Gemini HTTP ${res.statusCode}:`, JSON.stringify(parsed).slice(0, 300));
+        }
+
+        if (parsed.error) {
+          return reject(new Error(`Gemini error (${parsed.error.code}): ${parsed.error.message}`));
+        }
+        if (res.statusCode !== 200) {
+          return reject(new Error(`Gemini HTTP ${res.statusCode}: ${data.slice(0, 200)}`));
+        }
+        if (!parsed.candidates?.length) {
+          console.error('Gemini no candidates:', JSON.stringify(parsed).slice(0, 300));
+          return reject(new Error('Gemini returned no candidates — try again'));
+        }
         resolve(parsed);
       });
     });
-    req.on('error', reject);
-    req.setTimeout(20000, () => { req.destroy(); reject(new Error('Gemini request timed out')); });
+
+    req.on('error', (e) => reject(new Error('Gemini network error: ' + e.message)));
+    req.setTimeout(25000, () => { req.destroy(); reject(new Error('Gemini timed out after 25s')); });
     req.write(body);
     req.end();
   });
-}
-
-async function callGemini(systemPrompt, userMessage) {
-  const apiKey = process.env.GEMINI_API_KEY || '';
-  for (const model of GEMINI_MODELS) {
-    try {
-      console.log(`Trying Gemini model: ${model}`);
-      const result = await callGeminiModel(model, systemPrompt, userMessage, apiKey);
-      console.log(`✓ Gemini model ${model} succeeded`);
-      return result;
-    } catch(err) {
-      if (err.message.startsWith('MODEL_NOT_FOUND:')) {
-        console.log(`✗ Model ${model} not available, trying next...`);
-        continue; // try next model
-      }
-      throw err; // real error, stop trying
-    }
-  }
-  throw new Error('No Gemini model available. Check your API key and try again.');
 }
 
 router.post('/nl-query', async (req, res) => {
@@ -126,7 +121,9 @@ A: {"collection":"members","pipeline":[{"$match":{"policeFormVerified":{"$ne":tr
 
     let parsed;
     try {
-      parsed = JSON.parse(raw.replace(/```json|```/g, '').trim());
+      // FIX: Regex fixed onto a single line to prevent SyntaxError
+      const cleanedRaw = raw.replace(/```json|```/g, '').trim();
+      parsed = JSON.parse(cleanedRaw);
     } catch(e) {
       return res.status(502).json({ message: 'AI returned invalid JSON. Try rephrasing.' });
     }

@@ -1,171 +1,129 @@
-# 🏠 Hostel Management System v10
+# Hostel Management System
 
-A production-ready MERN stack hostel management system.
+MERN stack project built for managing a local hostel. Made this because my father runs a hostel and was doing everything in registers and WhatsApp – so I thought why not make something useful.
+
+Built with MongoDB, Express, React and Node.js (MERN stack). Deployed on Render with MongoDB Atlas.
 
 ---
 
-## 🚀 DEPLOYMENT OPTIONS
+## What it does
 
-### Option A — Render.com (FREE, Recommended — Access from any device)
+- Owner and manager login (different access levels)
+- Register hostel members with photo-ready ID card
+- Assign rooms, track rent, generate receipts
+- Monthly electricity readings with bill calculation
+- WhatsApp reminders for pending dues
+- Police verification form in Hindi
+- Final billing when a member vacates
+- Dashboard with revenue charts
+- Reports with CSV export
+- Auto notifications for due dates and expiring plans
+- Audit log so you can track who changed what
+- Daily database backup
 
-**Step 1 — MongoDB Atlas (Free Cloud Database)**
-1. Go to https://www.mongodb.com/atlas
-2. Sign up for free → Create a cluster (free tier)
-3. Click "Connect" → "Connect your application"
-4. Copy the connection string (looks like: `mongodb+srv://user:pass@cluster.mongodb.net/hostel`)
-5. Replace `<password>` with your actual password
-6. **Save this string — you'll need it in step 3**
+---
 
-**Step 2 — Push code to GitHub**
-1. Go to https://github.com → Create account → New Repository
-2. Name it `hostel-management` → Create
-3. On your PC, open Command Prompt in the hostel-management folder:
+## Tech Stack
+
+| Part | Tech |
+|---|---|
+| Backend | Node.js, Express |
+| Frontend | React 18 |
+| Database | MongoDB Atlas |
+| Auth | JWT + HttpOnly cookies |
+| Hosting | Render.com |
+| Charts | Recharts |
+| Search | Fuse.js (fuzzy) |
+
+---
+
+## How to run locally
+
+You need Node.js 20 and MongoDB installed (or use Atlas free tier).
+
+Create a `.env` file inside the `server/` folder:
+
 ```
-git init
-git add .
-git commit -m "Initial commit"
-git branch -M main
-git remote add origin https://github.com/YOUR_USERNAME/hostel-management.git
-git push -u origin main
+MONGODB_URI=your_mongodb_connection_string
+JWT_SECRET=anything_long_and_random
+NODE_ENV=development
+PORT=5000
 ```
 
-**Step 3 — Deploy on Render**
-1. Go to https://render.com → Sign up with GitHub
-2. Click "New +" → "Web Service"
-3. Connect your GitHub repo: `hostel-management`
-4. Fill in these settings:
-   - **Name:** hostel-management
-   - **Region:** Singapore (closest to India)
-   - **Build Command:** `npm install --prefix server && npm install --prefix client && npm run build --prefix client`
-   - **Start Command:** `node server/index.js`
-   - **Plan:** Free
-5. Add Environment Variables (click "Add Environment Variable"):
-   - `MONGODB_URI` = your Atlas connection string from Step 1
-   - `JWT_SECRET` = any long random text (e.g. `myHostelSuperSecretKey2026dinesh`)
-   - `NODE_ENV` = `production`
-   - `PORT` = `10000`
-6. Click "Create Web Service"
-7. Wait 5-10 minutes for build to complete
-8. Your app will be live at: `https://hostel-management.onrender.com`
-
-**Access from any device:** Phone, tablet, laptop — just open the URL in any browser!
-
----
-
-### Option B — Railway.app (Alternative Free Hosting)
-
-1. Go to https://railway.app → Sign up with GitHub
-2. New Project → Deploy from GitHub repo
-3. Add environment variables (same as Render above)
-4. Railway auto-detects Node.js — just set the Start Command: `node server/index.js`
-5. Add MongoDB plugin or use Atlas URI
-
----
-
-### Option C — Local Network (Access on home WiFi)
-
-Run on your PC and access from any phone/tablet on the same WiFi:
-
-1. Run `start.bat`
-2. Find your PC's local IP: Open Command Prompt → type `ipconfig` → find "IPv4 Address" (e.g. `192.168.1.5`)
-3. On any phone/tablet on same WiFi, open browser → go to `http://192.168.1.5:3000`
-
----
-
-## 🔐 Default Login
-
-| Username | Password | Role |
-|---|---|---|
-| `owner` | `owner123` | Full access |
-
-⚠️ **Change the password immediately after first login!**
-
----
-
-## ⚙️ Local Development
+Then:
 
 ```bash
-# Install all dependencies
+# install everything
 npm run install-all
 
-# Start development (two terminals)
-npm run dev-server     # Terminal 1 — starts backend on :5000
-npm run dev-client     # Terminal 2 — starts frontend on :3000
+# run backend (terminal 1)
+npm run dev-server
 
-# OR just double-click start.bat on Windows
+# run frontend (terminal 2)
+npm run dev-client
 ```
+
+Frontend runs at `http://localhost:3000`, backend at `http://localhost:5000`.
+
+Default login: `owner` / `owner123` – change it after first login.
 
 ---
 
-## 🏗️ Project Structure
+## Deploying to Render
+
+1. Push code to GitHub
+2. Go to render.com → New Web Service → connect repo
+3. Build command: `npm install --prefix server && npm install --prefix client && npm run build --prefix client`
+4. Start command: `node server/index.js`
+5. Add environment variables:
+   - `MONGODB_URI` – Atlas connection string
+   - `JWT_SECRET` – any random string
+   - `NODE_ENV` – production
+   - `PORT` – 10000
+
+Takes about 5-8 minutes to build. Free tier spins down after inactivity (keep-alive ping is already set up in the code).
+
+---
+
+## Project Structure
 
 ```
-hostel-management/
-├── server/                  # Node.js + Express backend
-│   ├── controllers/         # Business logic (memberController, receiptController)
-│   ├── middleware/          # auth.js, errorHandler.js
-│   ├── models/              # MongoDB schemas
-│   ├── routes/              # API route definitions
-│   ├── services/            # audit.js, notifications.js
-│   ├── utils/               # logger.js, validate.js
-│   ├── backups/             # Auto daily backups (JSON)
-│   ├── index.js             # Server entry point
-│   └── .env                 # Environment variables
+├── server/
+│   ├── controllers/       # member and receipt logic
+│   ├── middleware/        # auth, error handling
+│   ├── models/            # mongoose schemas
+│   ├── routes/            # API endpoints
+│   ├── services/          # notifications, audit
+│   ├── utils/             # logger, validation, encryption
+│   └── index.js
 │
-├── client/                  # React frontend
-│   ├── src/
-│   │   ├── components/      # Reusable: SearchBar, Pagination, etc.
-│   │   ├── hooks/           # useAutoLogout, etc.
-│   │   ├── pages/           # All page components
-│   │   ├── utils/           # api.js
-│   │   └── App.jsx          # Main app with routing
-│   └── build/               # Production build (created by npm run build)
+├── client/
+│   └── src/
+│       ├── pages/         # all page components
+│       ├── context/       # hostel + toast context
+│       ├── hooks/         # auto logout hook
+│       └── utils/         # api calls
 │
-├── package.json             # Root — build & deploy scripts
-├── render.yaml              # Render.com deployment config
-└── README.md
+└── package.json           # root build scripts
 ```
 
 ---
 
-## 📱 Features
+## Known issues / limitations
 
-- 🔐 Two-role login (Owner / Manager)
-- 👥 Member registration with unique ID (SS/26-27/001)
-- 🏠 20 rooms with color-coded occupancy
-- 🧾 Receipts with PDF print (SB/year/number format)
-- 📑 Final billing per room
-- ⚡ Monthly electric readings
-- 🚔 Police verification form (Hindi)
-- 📊 Dashboard with revenue charts
-- 📈 Reports with Excel export
-- 💰 Salary & expenses
-- 🗂️ Archive system for vacated members
-- 🔔 Auto notifications (due alerts, expiry alerts)
-- 📋 Audit log (who did what, when)
-- 💾 Daily automatic backup
-- 🔍 Search by name / room / mobile across all pages
+- Free tier on Render sleeps after 15 min of no traffic (keep-alive helps but doesn't fully prevent it)
+- No mobile app, just a responsive web UI
+- Electric bill prediction is basic linear regression on last 6 readings
+- WhatsApp integration uses wa.me links, not actual WhatsApp Business API
 
 ---
 
-## 🔒 Security Features
+## Screenshots
 
-- JWT authentication (12h expiry)
-- Auto logout after 2h inactivity
-- Password hashing (bcrypt)
-- Rate limiting (prevent brute force)
-- Input validation (10-digit mobile, 12-digit Aadhar)
-- Centralized error handling
-- Audit trail for all actions
+
 
 ---
 
-## 🆘 Troubleshooting
+## Made by
 
-| Problem | Fix |
-|---|---|
-| App won't start | Check MongoDB is running. Check `.env` has correct `MONGODB_URI` |
-| Login not working | Default: owner / owner123 |
-| Render build fails | Check build logs — usually a missing env variable |
-| Can't access from phone | Check you're on same WiFi, use PC's local IP |
-| Atlas connection refused | Whitelist `0.0.0.0/0` in Atlas Network Access |
+Divyanshu Singh Thakur 

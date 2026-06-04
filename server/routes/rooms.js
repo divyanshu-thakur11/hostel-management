@@ -90,17 +90,32 @@ router.put('/:roomNumber', async (req, res, next) => {
     const hostelId = await getHostelId(req);
     if (!hostelId) return res.status(400).json({ message: 'No hostel assigned' });
     const roomNum = parseInt(req.params.roomNumber);
-    const { rent, advance, maxCapacity, notes } = req.body;
+    const { rent, advance, maxCapacity, notes, reason } = req.body;
+
+    // F2: Record rent history if rent is changing
+    const existing = await Room.findOne({ hostelId, roomNumber: roomNum });
+    const updateOps = {
+      $set: {
+        ...(rent        !== undefined && { rent:        parseFloat(rent)       || 0 }),
+        ...(advance     !== undefined && { advance:     parseFloat(advance)    || 0 }),
+        ...(maxCapacity !== undefined && { maxCapacity: parseInt(maxCapacity)  || 10 }),
+        ...(notes       !== undefined && { notes }),
+      }
+    };
+    if (rent !== undefined && existing && parseFloat(rent) !== existing.rent) {
+      updateOps.$push = {
+        rentHistory: {
+          oldRent:   existing.rent,
+          newRent:   parseFloat(rent) || 0,
+          changedOn: new Date(),
+          changedBy: req.user?.name || req.user?.username || 'owner',
+          reason:    reason || '',
+        }
+      };
+    }
     const updated = await Room.findOneAndUpdate(
       { hostelId, roomNumber: roomNum },
-      {
-        $set: {
-          ...(rent        !== undefined && { rent:        parseFloat(rent)       || 0 }),
-          ...(advance     !== undefined && { advance:     parseFloat(advance)    || 0 }),
-          ...(maxCapacity !== undefined && { maxCapacity: parseInt(maxCapacity)  || 10 }),
-          ...(notes       !== undefined && { notes }),
-        }
-      },
+      updateOps,
       { new: true, upsert: true }
     );
     res.json(updated);
@@ -134,4 +149,3 @@ router.put('/', async (req, res, next) => {
 });
 
 module.exports = router;
-  

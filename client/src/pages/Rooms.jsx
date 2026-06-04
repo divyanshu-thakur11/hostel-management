@@ -13,11 +13,12 @@ export default function Rooms() {
   const { hostelSwitchCount } = useHostel();
   const [rooms, setRooms]         = useState([]);
   const [loading, setLoading]     = useState(true);
-  const [editRoom, setEditRoom]   = useState(null);   // room being edited in modal
+  const [editRoom, setEditRoom]   = useState(null);
   const [editForm, setEditForm]   = useState({});
   const [saving, setSaving]       = useState(false);
-  const [viewRoom, setViewRoom]   = useState(null);   // room whose members are shown
-  const [bulkMode, setBulkMode]   = useState(false);  // bulk edit all rooms
+  const [viewRoom, setViewRoom]   = useState(null);
+  const [bulkMode, setBulkMode]   = useState(false);
+  const [historyRoom, setHistoryRoom] = useState(null); // F2: room to show rent history
   const [bulkData, setBulkData]   = useState([]);
   const toast = useToast();
 
@@ -42,6 +43,7 @@ export default function Rooms() {
       advance:     room.advance     || 0,
       maxCapacity: room.maxCapacity || 6,
       notes:       room.notes       || '',
+      reason:      '',  // F2: reason for rent change
     });
   };
 
@@ -277,14 +279,61 @@ export default function Rooms() {
                     onChange={e => setEditForm(p => ({ ...p, notes: e.target.value }))}
                     placeholder="e.g. Ground floor, AC room" />
                 </div>
+                {/* F2: reason for rent change */}
+                <div className="form-group full">
+                  <label>Reason for rent change (optional)</label>
+                  <input value={editForm.reason}
+                    onChange={e => setEditForm(p => ({ ...p, reason: e.target.value }))}
+                    placeholder="e.g. Annual increase, new AC installed" />
+                </div>
               </div>
             </div>
             <div className="modal-footer">
+              <button className="btn btn-secondary" onClick={() => { setHistoryRoom(editRoom); setEditRoom(null); }}>📋 Rent History</button>
               <button className="btn btn-secondary" onClick={() => setEditRoom(null)}>Cancel</button>
               <button className="btn btn-primary" onClick={saveEdit} disabled={saving}>
                 {saving ? 'Saving...' : 'Save Room'}
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* F2: Rent History Modal */}
+      {historyRoom && (
+        <div className="modal-overlay" onClick={e=>e.target===e.currentTarget&&setHistoryRoom(null)}>
+          <div className="modal" style={{maxWidth:500}}>
+            <div className="modal-header">
+              <h3>📋 Rent History — Room {historyRoom.roomNumber}</h3>
+              <button className="close-btn" onClick={()=>setHistoryRoom(null)}>✕</button>
+            </div>
+            <div className="modal-body">
+              <div style={{marginBottom:12,padding:'10px 14px',background:'var(--bg3)',borderRadius:6,display:'flex',justifyContent:'space-between'}}>
+                <span style={{color:'var(--text2)',fontSize:'0.85rem'}}>Current Rent</span>
+                <span style={{fontFamily:'Rajdhani',fontWeight:700,fontSize:'1.1rem',color:'var(--accent)'}}>₹{(historyRoom.rent||0).toLocaleString('en-IN')}/mo</span>
+              </div>
+              {(!historyRoom.rentHistory || historyRoom.rentHistory.length === 0) ? (
+                <div className="empty-state"><div className="empty-icon">📋</div><p>No rent changes recorded yet</p><p style={{fontSize:'0.75rem',color:'var(--text3)',marginTop:4}}>History is recorded from now onwards when you change rent</p></div>
+              ) : (
+                <div className="table-wrap">
+                  <table>
+                    <thead><tr><th>Date</th><th>Changed By</th><th>Old Rent</th><th>New Rent</th><th>Reason</th></tr></thead>
+                    <tbody>
+                      {[...historyRoom.rentHistory].reverse().map((h,i) => (
+                        <tr key={i}>
+                          <td style={{fontSize:'0.8rem'}}>{new Date(h.changedOn).toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'})}</td>
+                          <td style={{fontSize:'0.82rem',color:'var(--text2)'}}>{h.changedBy}</td>
+                          <td style={{color:'var(--danger)'}}>₹{(h.oldRent||0).toLocaleString('en-IN')}</td>
+                          <td style={{color:'var(--success)',fontWeight:600}}>₹{(h.newRent||0).toLocaleString('en-IN')}</td>
+                          <td style={{fontSize:'0.78rem',color:'var(--text3)'}}>{h.reason||'—'}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+            <div className="modal-footer"><button className="btn btn-secondary" onClick={()=>setHistoryRoom(null)}>Close</button></div>
           </div>
         </div>
       )}

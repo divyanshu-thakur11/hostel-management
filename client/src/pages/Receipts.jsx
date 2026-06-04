@@ -258,27 +258,29 @@ export default function Receipts() {
       const nums = await receiptsAPI.getNextNumbers();
       const payload = {
         ...nums.data,
-        roomNumber: dueModal.roomNumber,
-        memberId: dueModal.memberId,
-        memberName: dueModal.memberName,
-        memberMobile: dueModal.memberMobile,
-        members: dueModal.members || [],
-        packageName: 'other',
-        paymentType: 'other',
-        totalAmount: dueModal.balanceDue,
-        amountPaid: dueModal.balanceDue,
-        balanceDue: 0,
-        isPartPayment: false,
-        modeOfPayment: dueForm.modeOfPayment,
-        receiptDate: dueForm.receiptDate || new Date().toISOString().split('T')[0],
-        notes: dueForm.notes || `Due clearance against Bill No. ${dueModal.billNumber}`,
-        amountInWords: numberToWords(dueModal.balanceDue) + ' Rupees Only',
-        fromDate: dueModal.fromDate,
-        toDate: dueModal.toDate,
-        monthYear: dueModal.monthYear,
-        billingMonth: dueModal.billingMonth,
+        roomNumber:     dueModal.roomNumber,
+        memberId:       dueModal.memberId,
+        memberName:     dueModal.memberName,
+        memberMobile:   dueModal.memberMobile,
+        members:        dueModal.members || [],
+        packageName:    dueModal.packageName || 'rent',  // Bug 3 fix: use original packageName not 'other'
+        paymentType:    dueModal.packageName || 'rent',
+        totalAmount:    dueModal.balanceDue,
+        amountPaid:     dueModal.balanceDue,
+        balanceDue:     0,
+        isPartPayment:  false,
+        modeOfPayment:  dueForm.modeOfPayment,
+        receiptDate:    dueForm.receiptDate || new Date().toISOString().split('T')[0],
+        notes:          dueForm.notes || `Due clearance against Bill No. ${dueModal.billNumber}`,
+        amountInWords:  numberToWords(dueModal.balanceDue) + ' Rupees Only',
+        fromDate:       dueModal.fromDate,
+        toDate:         dueModal.toDate,
+        monthYear:      dueModal.monthYear,
+        billingMonth:   dueModal.billingMonth,
       };
       await receiptsAPI.create(payload);
+      // Bug 2 fix: clear balanceDue on the original part-payment receipt
+      await receiptsAPI.clearDue(dueModal._id);
       toast(`Due receipt created for ₹${dueModal.balanceDue.toLocaleString('en-IN')}`);
       setDueModal(null);
       loadReceipts(page);

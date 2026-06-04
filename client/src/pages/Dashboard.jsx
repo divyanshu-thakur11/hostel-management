@@ -27,15 +27,34 @@ export default function Dashboard() {
   const [showDue, setShowDue] = useState(false);
   const [showExpiring, setShowExpiring] = useState(false);
 
-  const load = useCallback(() => {
+  const [error, setError] = useState(false);
+
+  const load = useCallback((retrying = false) => {
     setLoading(true);
-    dashboardAPI.get().then(r => { setStats(r.data); setLoading(false); }).catch(() => setLoading(false));
+    setError(false);
+    dashboardAPI.get()
+      .then(r => { setStats(r.data); setLoading(false); })
+      .catch(() => {
+        if (!retrying) {
+          // Auto-retry once after 2 seconds (handles Render cold start)
+          setTimeout(() => load(true), 2000);
+        } else {
+          setLoading(false);
+          setError(true);
+        }
+      });
   }, [hostelSwitchCount]);
 
   useEffect(() => { load(); }, [load]);
 
   if (loading) return <div style={{ color: 'var(--text2)', padding: 40, textAlign: 'center' }}>⏳ Loading dashboard...</div>;
-  if (!stats) return <div style={{ color: 'var(--danger)', padding: 40 }}>Failed to load dashboard. Check server connection.</div>;
+  if (error || !stats) return (
+    <div style={{ color: 'var(--danger)', padding: 40, textAlign: 'center' }}>
+      <div style={{ fontSize: '2rem', marginBottom: 12 }}>⚠️</div>
+      <div style={{ marginBottom: 16 }}>Failed to load dashboard. Check server connection.</div>
+      <button className="btn btn-secondary" onClick={() => load()}>🔄 Retry</button>
+    </div>
+  );
 
   const maxTrend = Math.max(...(stats.trend || []).map(t => t.amount), 1);
   const occupancyPct = stats.totalRooms > 0 ? Math.round((stats.occupiedRooms / stats.totalRooms) * 100) : 0;

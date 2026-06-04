@@ -18,6 +18,7 @@ const getHostelId = async (req) => {
 
 router.get('/next-numbers',             ctrl.nextNumbers);
 router.post('/reset-serial',            ctrl.resetSerial);
+router.patch('/:id/clear-due',          ctrl.clearDue);
 router.get('/room/:roomNumber/summary', ctrl.roomSummary);
 router.get('/room/:roomNumber',         ctrl.byRoom);
 router.get('/',                         ctrl.list);

@@ -85,6 +85,19 @@ exports.resetSerial = async (req, res, next) => {
   } catch(err) { next(err); }
 };
 
+exports.clearDue = async (req, res, next) => {
+  try {
+    // Called after a due receipt is created — clears the balanceDue on the original part-payment receipt
+    const updated = await Receipt.findByIdAndUpdate(
+      req.params.id,
+      { $set: { balanceDue: 0 } },
+      { new: true }
+    );
+    if (!updated) return res.status(404).json({ message: 'Receipt not found' });
+    res.json(updated);
+  } catch(err) { next(err); }
+};
+
 exports.byRoom = async (req, res, next) => {
   try {
     const hostelId = await getHostelId(req);

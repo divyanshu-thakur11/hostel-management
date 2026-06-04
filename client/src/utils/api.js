@@ -80,6 +80,7 @@ export const receiptsAPI = {
   resetSerial:    (yearType) => api.post('/receipts/reset-serial', { yearType }),
   create:         (data)   => api.post('/receipts', data),
   delete:         (id)     => api.delete(`/receipts/${id}`),
+  clearDue:       (id)     => api.patch(`/receipts/${id}/clear-due`), // Bug 2 fix
 };
 
 export const electricAPI = {

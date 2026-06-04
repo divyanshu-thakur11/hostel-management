@@ -13,6 +13,7 @@ import PoliceVerification from './pages/PoliceVerification';
 import FinalBilling from './pages/FinalBilling';
 import Reports from './pages/Reports';
 import Salary from './pages/Salary';
+import OccupancyCalendar from './pages/OccupancyCalendar';
 import Managers from './pages/Managers';
 import Hostels from './pages/Hostels';
 import Notifications from './pages/Notifications';
@@ -34,6 +35,7 @@ const OWNER_NAV = [
   { path: '/dues',         label: 'Dues & Payments',  icon: '⚠️' },
   { path: '/police',       label: 'Police Form',      icon: '🚔' },
   { path: '/reports',      label: 'Reports & Export', icon: '📈' },
+  { path: '/calendar',     label: 'Occupancy Calendar', icon: '📅' },
   { path: '/salary',       label: 'Salary',           icon: '💰' },
   { path: '/audit',        label: 'Audit Log',        icon: '🔍' },
   { path: '/managers',     label: 'Managers',         icon: '👨‍💼' },
@@ -48,6 +50,7 @@ const MANAGER_NAV = [
   { path: '/final-billing',label: 'Final Billing',  icon: '📑' },
   { path: '/electric',     label: 'Electric',       icon: '⚡' },
   { path: '/dues',         label: 'Dues & Payments',icon: '⚠️' },
+  { path: '/calendar',     label: 'Occupancy',      icon: '📅' },
   { path: '/police',       label: 'Police Form',    icon: '🚔' },
   { path: '/managers',     label: 'My Account',     icon: '🔑' },
 ];
@@ -295,6 +298,7 @@ function AppShell() {
             <Route path="/dues"          element={<DuesAndPayments />} />
             <Route path="/police"        element={<PoliceVerification />} />
             <Route path="/reports"       element={user.role==='owner' ? <Reports /> : <Navigate to="/"/>} />
+            <Route path="/calendar"      element={<OccupancyCalendar />} />
             <Route path="/salary"        element={user.role==='owner' ? <Salary />  : <Navigate to="/"/>} />
             <Route path="/notifications" element={<Notifications />} />
             <Route path="/audit"         element={user.role==='owner' ? <AuditLog /> : <Navigate to="/"/>} />

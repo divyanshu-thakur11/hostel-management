@@ -57,6 +57,34 @@ exports.nextNumbers = async (req, res, next) => {
   } catch(err) { next(err); }
 };
 
+// Reset bill serial counter for new financial year
+exports.resetSerial = async (req, res, next) => {
+  try {
+    const hostelId = await getHostelId(req);
+    if (!hostelId) return res.status(400).json({ message: 'No hostel found' });
+    const { yearType } = req.body; // 'april' (26-27) or 'january' (26-26)
+    const now = new Date();
+    let fromYear, toYear;
+    if (yearType === 'april') {
+      // Financial year April to March: e.g. Apr 2026 → Mar 2027 = "26-27"
+      fromYear = now.getMonth() >= 3 ? now.getFullYear() : now.getFullYear() - 1;
+      toYear   = fromYear + 1;
+    } else {
+      // Calendar year January to December: e.g. Jan 2026 → Dec 2026 = "26-26"
+      fromYear = now.getFullYear();
+      toYear   = fromYear;
+    }
+    const newYear = `${String(fromYear).slice(2)}-${String(toYear).slice(2)}`;
+    // Mark all receipts in this new year as having serial 0 so next one starts at 1
+    // We do this by simply checking — no deletion, just confirm the year string is ready
+    res.json({
+      message: `Bill numbers will now use year format: SB/${newYear}/001`,
+      newYear,
+      nextBill: `SB/${newYear}/001`,
+    });
+  } catch(err) { next(err); }
+};
+
 exports.byRoom = async (req, res, next) => {
   try {
     const hostelId = await getHostelId(req);

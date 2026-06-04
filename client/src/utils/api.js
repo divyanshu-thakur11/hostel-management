@@ -77,6 +77,7 @@ export const receiptsAPI = {
   getByRoom:      (n)      => api.get(`/receipts/room/${n}`),
   getRoomSummary: (n)      => api.get(`/receipts/room/${n}/summary`),
   getNextNumbers: ()       => api.get('/receipts/next-numbers'),
+  resetSerial:    (yearType) => api.post('/receipts/reset-serial', { yearType }),
   create:         (data)   => api.post('/receipts', data),
   delete:         (id)     => api.delete(`/receipts/${id}`),
 };

@@ -317,12 +317,60 @@ export default function Receipts() {
     billingMonthOptions.push({ val, label });
   }
 
+  const [showResetModal, setShowResetModal] = useState(false);
+  const [resetResult, setResetResult]       = useState(null);
+
+  const handleResetSerial = async (yearType) => {
+    try {
+      const r = await receiptsAPI.resetSerial(yearType);
+      setResetResult(r.data);
+      toast(`Bill number reset — next bill: ${r.data.nextBill}`);
+    } catch(e) { toast('Reset failed', 'error'); }
+  };
+
   return (
     <div>
       <div className="page-header">
         <div><h2>Receipts</h2><p>{total} receipts · room-wise billing</p></div>
-        <button className="btn btn-primary" onClick={openModal}>+ New Receipt</button>
+        <div style={{display:'flex',gap:8,flexWrap:'wrap'}}>
+          <button className="btn btn-secondary" onClick={()=>{setShowResetModal(true);setResetResult(null);}}>📅 New Year Reset</button>
+          <button className="btn btn-primary" onClick={openModal}>+ New Receipt</button>
+        </div>
       </div>
+
+      {/* New Year Reset Modal */}
+      {showResetModal && (
+        <div className="modal-overlay" onClick={e=>e.target===e.currentTarget&&setShowResetModal(false)}>
+          <div className="modal" style={{maxWidth:420}}>
+            <div className="modal-header"><h3>📅 Reset Bill Serial Number</h3><button className="close-btn" onClick={()=>setShowResetModal(false)}>✕</button></div>
+            <div className="modal-body">
+              <p style={{color:'var(--text2)',fontSize:'0.85rem',marginBottom:16}}>
+                Choose your year type. The next receipt will start from <strong>/001</strong> in the new year format.
+                Existing receipts are not affected.
+              </p>
+              {resetResult && (
+                <div style={{background:'rgba(46,204,113,0.08)',border:'1px solid rgba(46,204,113,0.3)',borderRadius:8,padding:'12px 16px',marginBottom:16}}>
+                  <div style={{color:'var(--success)',fontWeight:700,fontSize:'0.95rem'}}>✓ {resetResult.message}</div>
+                  <div style={{color:'var(--text2)',fontSize:'0.85rem',marginTop:4}}>Next bill: <strong>{resetResult.nextBill}</strong></div>
+                </div>
+              )}
+              <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12}}>
+                <button onClick={()=>handleResetSerial('april')} className="btn btn-secondary" style={{padding:'16px',height:'auto',flexDirection:'column',gap:4,alignItems:'center'}}>
+                  <span style={{fontSize:'1.4rem'}}>📅</span>
+                  <strong>April 1st</strong>
+                  <span style={{fontSize:'0.75rem',color:'var(--text3)'}}>Financial year (26-27)</span>
+                </button>
+                <button onClick={()=>handleResetSerial('january')} className="btn btn-secondary" style={{padding:'16px',height:'auto',flexDirection:'column',gap:4,alignItems:'center'}}>
+                  <span style={{fontSize:'1.4rem'}}>🗓️</span>
+                  <strong>January 1st</strong>
+                  <span style={{fontSize:'0.75rem',color:'var(--text3)'}}>Calendar year (26-26)</span>
+                </button>
+              </div>
+            </div>
+            <div className="modal-footer"><button className="btn btn-secondary" onClick={()=>setShowResetModal(false)}>Close</button></div>
+          </div>
+        </div>
+      )}
 
       {/* Filters */}
       <div style={{ display:'flex', gap:8, marginBottom:14, flexWrap:'wrap', alignItems:'center' }}>

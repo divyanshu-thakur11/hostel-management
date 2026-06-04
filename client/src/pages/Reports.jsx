@@ -321,6 +321,7 @@ export default function Reports() {
     { id:'rooms',     label:'🏠 Rooms'     },
     { id:'payments',  label:'🧾 Payments'  },
     { id:'members',   label:'👥 Members'   },
+    { id:'tax',       label:'🧾 Tax Summary' },
     { id:'export',    label:'💾 Export'    },
   ];
 
@@ -774,6 +775,146 @@ export default function Reports() {
           </div>
         </div>
       )}
+
+
+      {/* ════════════════════════════════════════════════════════
+          TAX SUMMARY TAB
+      ════════════════════════════════════════════════════════ */}
+      {tab === 'tax' && (() => {
+        const taxYears = [...new Set(receipts.map(r => {
+          const d = new Date(r.receiptDate);
+          const m = d.getMonth(); // 0=Jan
+          const y = d.getFullYear();
+          return m >= 3 ? `${y}-${y+1}` : `${y-1}-${y}`; // April = financial year start
+        }))].sort().reverse();
+        const [selYear, setSelYear] = React.useState(taxYears[0] || '');
+        const [fromY, toY] = selYear ? selYear.split('-').map(Number) : [0,0];
+        const yearReceipts = receipts.filter(r => {
+          const d = new Date(r.receiptDate);
+          const m = d.getMonth(); const y = d.getFullYear();
+          const fy = m >= 3 ? `${y}-${y+1}` : `${y-1}-${y}`;
+          return fy === selYear;
+        });
+        const yearSalary = salary.filter(s => {
+          const d = new Date(s.salaryDate || s.createdAt);
+          const m = d.getMonth(); const y = d.getFullYear();
+          const fy = m >= 3 ? `${y}-${y+1}` : `${y-1}-${y}`;
+          return fy === selYear;
+        });
+        const rentIncome    = yearReceipts.filter(r=>r.packageName==='rent').reduce((s,r)=>s+(r.amountPaid||r.totalAmount||0),0);
+        const electricIncome= yearReceipts.filter(r=>r.packageName==='electric').reduce((s,r)=>s+(r.amountPaid||r.totalAmount||0),0);
+        const advanceIncome = yearReceipts.filter(r=>r.packageName==='advance').reduce((s,r)=>s+(r.amountPaid||r.totalAmount||0),0);
+        const otherIncome   = yearReceipts.filter(r=>!['rent','electric','advance'].includes(r.packageName)).reduce((s,r)=>s+(r.amountPaid||r.totalAmount||0),0);
+        const grossIncome   = rentIncome + electricIncome + otherIncome; // advance not counted as income
+        const salaryExp     = yearSalary.reduce((s,r)=>s+(r.netSalary||0),0);
+        const maintExp      = yearSalary.reduce((s,r)=>s+(r.maintenanceCosts||[]).reduce((a,c)=>a+(c.amount||0),0),0);
+        const totalExpenses = salaryExp + maintExp;
+        const netProfit     = grossIncome - totalExpenses;
+
+        const printTax = () => {
+          const w = window.open('','_blank');
+          w.document.write(`<!DOCTYPE html><html><head><title>Tax Summary ${selYear}</title>
+            <style>*{box-sizing:border-box;margin:0;padding:0;}body{font-family:Arial,sans-serif;padding:32px;color:#111;font-size:13px;}
+            h1{font-size:1.4rem;margin-bottom:4px;}p{color:#666;margin-bottom:20px;}
+            table{width:100%;border-collapse:collapse;margin-bottom:20px;}
+            th{background:#f5f5f5;padding:9px 12px;text-align:left;border-bottom:2px solid #ccc;font-size:11px;text-transform:uppercase;}
+            td{padding:9px 12px;border-bottom:1px solid #eee;}
+            .total{font-weight:700;background:#fffbe6;} .net{font-weight:700;font-size:1.1rem;}
+            .right{text-align:right;} @media print{@page{margin:12mm;}}</style>
+            </head><body>
+            <h1>Income & Expenditure Statement</h1>
+            <p>Financial Year: April ${fromY} – March ${toY} &nbsp;|&nbsp; Generated: ${new Date().toLocaleDateString('en-IN')}</p>
+            <table><thead><tr><th>Income Head</th><th class="right">Amount (₹)</th></tr></thead><tbody>
+              <tr><td>Rent Collected</td><td class="right">₹${rentIncome.toLocaleString('en-IN')}</td></tr>
+              <tr><td>Electric Bill Collected</td><td class="right">₹${electricIncome.toLocaleString('en-IN')}</td></tr>
+              <tr><td>Other Income</td><td class="right">₹${otherIncome.toLocaleString('en-IN')}</td></tr>
+              <tr class="total"><td>Total Gross Income</td><td class="right">₹${grossIncome.toLocaleString('en-IN')}</td></tr>
+            </tbody></table>
+            <table><thead><tr><th>Expenditure Head</th><th class="right">Amount (₹)</th></tr></thead><tbody>
+              <tr><td>Staff Salary</td><td class="right">₹${salaryExp.toLocaleString('en-IN')}</td></tr>
+              <tr><td>Maintenance & Repairs</td><td class="right">₹${maintExp.toLocaleString('en-IN')}</td></tr>
+              <tr class="total"><td>Total Expenditure</td><td class="right">₹${totalExpenses.toLocaleString('en-IN')}</td></tr>
+            </tbody></table>
+            <table><tbody>
+              <tr class="net"><td>Net Profit / Loss</td><td class="right">₹${netProfit.toLocaleString('en-IN')}${netProfit<0?' (Loss)':' (Profit)'}</td></tr>
+            </tbody></table>
+            <p style="margin-top:40px;font-size:11px;color:#aaa">This is a system-generated summary. Please verify with your chartered accountant before filing returns.</p>
+            </body></html>`);
+          w.document.close(); setTimeout(()=>w.print(),400);
+        };
+
+        return (
+          <div style={{display:'flex',flexDirection:'column',gap:14}}>
+            <div className="card">
+              <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',flexWrap:'wrap',gap:10,marginBottom:18}}>
+                <div>
+                  <div style={{fontFamily:'Rajdhani',fontWeight:700,fontSize:'1.05rem',color:'var(--text)'}}>🧾 Income Tax Summary</div>
+                  <div style={{fontSize:'0.75rem',color:'var(--text3)',marginTop:2}}>Financial year-wise income & expenditure. Hand this to your CA for ITR filing.</div>
+                </div>
+                <div style={{display:'flex',gap:8,alignItems:'center'}}>
+                  <select value={selYear} onChange={e=>setSelYear(e.target.value)}
+                    style={{background:'var(--bg3)',border:'1px solid var(--border)',borderRadius:6,padding:'7px 12px',color:'var(--text)',fontSize:'0.85rem',outline:'none'}}>
+                    {taxYears.map(y=><option key={y} value={y}>FY {y}</option>)}
+                  </select>
+                  <button className="btn btn-secondary" onClick={printTax}>🖨 Print / PDF</button>
+                </div>
+              </div>
+
+              <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:14,marginBottom:18}}>
+                {/* Income */}
+                <div style={{background:'rgba(46,204,113,0.04)',border:'1px solid rgba(46,204,113,0.2)',borderRadius:8,padding:'14px 16px'}}>
+                  <div style={{fontFamily:'Rajdhani',fontWeight:700,color:'var(--success)',marginBottom:12,fontSize:'0.9rem',textTransform:'uppercase',letterSpacing:'0.05em'}}>📥 Income</div>
+                  {[
+                    {label:'Rent Collected',      value:rentIncome},
+                    {label:'Electric Collected',   value:electricIncome},
+                    {label:'Other Income',         value:otherIncome},
+                  ].map((row,i)=>(
+                    <div key={i} style={{display:'flex',justifyContent:'space-between',padding:'7px 0',borderBottom:'1px dashed var(--border)',fontSize:'0.85rem'}}>
+                      <span style={{color:'var(--text2)'}}>{row.label}</span>
+                      <span style={{fontWeight:600}}>₹{row.value.toLocaleString('en-IN')}</span>
+                    </div>
+                  ))}
+                  <div style={{display:'flex',justifyContent:'space-between',padding:'10px 0 0',fontSize:'1rem',fontFamily:'Rajdhani',fontWeight:700,color:'var(--success)'}}>
+                    <span>Gross Income</span><span>₹{grossIncome.toLocaleString('en-IN')}</span>
+                  </div>
+                </div>
+
+                {/* Expenditure */}
+                <div style={{background:'rgba(231,76,60,0.04)',border:'1px solid rgba(231,76,60,0.2)',borderRadius:8,padding:'14px 16px'}}>
+                  <div style={{fontFamily:'Rajdhani',fontWeight:700,color:'var(--danger)',marginBottom:12,fontSize:'0.9rem',textTransform:'uppercase',letterSpacing:'0.05em'}}>📤 Expenditure</div>
+                  {[
+                    {label:'Staff Salary',          value:salaryExp},
+                    {label:'Maintenance & Repairs', value:maintExp},
+                  ].map((row,i)=>(
+                    <div key={i} style={{display:'flex',justifyContent:'space-between',padding:'7px 0',borderBottom:'1px dashed var(--border)',fontSize:'0.85rem'}}>
+                      <span style={{color:'var(--text2)'}}>{row.label}</span>
+                      <span style={{fontWeight:600}}>₹{row.value.toLocaleString('en-IN')}</span>
+                    </div>
+                  ))}
+                  <div style={{display:'flex',justifyContent:'space-between',padding:'10px 0 0',fontSize:'1rem',fontFamily:'Rajdhani',fontWeight:700,color:'var(--danger)'}}>
+                    <span>Total Expenses</span><span>₹{totalExpenses.toLocaleString('en-IN')}</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Net Profit */}
+              <div style={{padding:'18px 20px',background:netProfit>=0?'rgba(46,204,113,0.08)':'rgba(231,76,60,0.08)',border:`2px solid ${netProfit>=0?'rgba(46,204,113,0.3)':'rgba(231,76,60,0.3)'}`,borderRadius:10,display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+                <div>
+                  <div style={{fontFamily:'Rajdhani',fontWeight:700,fontSize:'1rem',color:'var(--text)'}}>{netProfit>=0?'Net Profit':'Net Loss'} — FY {selYear}</div>
+                  <div style={{fontSize:'0.75rem',color:'var(--text3)',marginTop:2}}>Gross Income − Total Expenses</div>
+                </div>
+                <div style={{fontFamily:'Rajdhani',fontWeight:800,fontSize:'2rem',color:netProfit>=0?'var(--success)':'var(--danger)'}}>
+                  ₹{Math.abs(netProfit).toLocaleString('en-IN')}
+                </div>
+              </div>
+
+              <div style={{marginTop:14,padding:'10px 14px',background:'var(--bg3)',borderRadius:6,fontSize:'0.75rem',color:'var(--text3)'}}>
+                ⚠️ Note: Advance deposits are excluded from income as they are refundable. This summary is for reference only — consult your CA for actual ITR filing.
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* ════════════════════════════════════════════════════════
           EXPORT TAB

@@ -150,6 +150,7 @@ export default function DuesAndPayments() {
         elecReading,
         totalDue: rentDue + elecDue,
         mobileNo: (r.members || [])[0]?.mobileNo || '',
+        memberMobiles: (r.members || []).map(m => m.mobileNo).filter(Boolean),
         memberNames: (r.members || []).map(m => m.name).join(', '),
       };
     })
@@ -244,6 +245,38 @@ export default function DuesAndPayments() {
                 <table><thead><tr><th>Room</th><th>Members</th><th>Count</th><th>Fixed Rent</th><th>Paid</th><th>Rent Due</th><th>Elec Bill</th><th>Elec Due</th><th>Total Due</th></tr></thead>
                 <tbody>${rows}</tbody></table>`);
             }}>🖨 Print Dues List</button>
+
+            {/* F3: Bulk WhatsApp — sends reminder to every member with dues */}
+            <button className="btn btn-xs"
+              style={{background:'#25d366',color:'white',border:'none',fontWeight:700,cursor:'pointer',borderRadius:6,padding:'4px 10px'}}
+              onClick={() => {
+                const dueRooms = filterR(roomDues).filter(r => r.totalDue > 0 && r.memberMobiles?.length > 0);
+                if (dueRooms.length === 0) { alert('No rooms with dues and mobile numbers found'); return; }
+                if (!window.confirm(`Send WhatsApp reminders to ${dueRooms.length} room(s) with pending dues?`)) return;
+                dueRooms.forEach((r, idx) => {
+                  setTimeout(() => {
+                    const msg = [
+                      `🏠 *Hostel Rent Reminder*`,
+                      `━━━━━━━━━━━━━━━━`,
+                      `📅 Month: ${MONTHS[curMon-1]} ${curYr}`,
+                      `🚪 Room No: *${r.roomNumber}*`,
+                      ``,
+                      r.rentDue > 0 ? `🏠 Rent Due: *₹${r.rentDue.toLocaleString('en-IN')}*` : '',
+                      r.elecDue > 0 ? `⚡ Electric Due: *₹${r.elecDue.toLocaleString('en-IN')}*` : '',
+                      ``,
+                      `💰 *Total Pending: ₹${r.totalDue.toLocaleString('en-IN')}*`,
+                      ``,
+                      `Please clear dues at earliest. Late payment: ₹50/day fine.`,
+                      `Thank you 🙏`,
+                    ].filter(Boolean).join('\n');
+                    const num = `91${String(r.memberMobiles[0]).replace(/\D/g,'').slice(-10)}`;
+                    window.open(`https://wa.me/${num}?text=${encodeURIComponent(msg)}`, '_blank');
+                  }, idx * 1200); // 1.2s gap between each to avoid browser blocking
+                });
+                toast(`Opening WhatsApp for ${dueRooms.length} room(s)...`);
+              }}>
+              📱 Bulk WhatsApp ({filterR(roomDues).filter(r=>r.totalDue>0).length} due)
+            </button>
           </div>
 
           {/* Summary row */}

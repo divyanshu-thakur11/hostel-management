@@ -53,6 +53,15 @@ app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', time: new Date().toISOString(), uptime: Math.floor(process.uptime()) });
 });
 
+// ── DB health check — return clear error if MongoDB is not connected ───────────
+app.use('/api', (req, res, next) => {
+  if (req.path === '/health') return next(); // always allow health check
+  if (mongoose.connection.readyState !== 1) {
+    return res.status(503).json({ message: 'Database not connected. Please wait and try again.' });
+  }
+  next();
+});
+
 // ── API Routes ─────────────────────────────────────────────────────────────────
 app.use('/api/auth',          require('./routes/auth'));
 app.use('/api/hostels',       require('./routes/hostels'));
@@ -144,48 +153,80 @@ app.use(notFound);
 app.use(errorHandler);
 
 // ── Bootstrap DB ───────────────────────────────────────────────────────────────
-mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/hostel_management')
-  .then(async () => {
-    logger.info('MongoDB connected');
-    const User   = require('./models/User');
-    const Hostel = require('./models/Hostel');
-    const count  = await User.countDocuments();
-    if (count === 0) {
-      const hostel = await new Hostel({
-        name: 'Shiv Kripa Hostel',
-        address: '1-B Shivkripa Colony Sajan Nagar, Indore',
-        totalRooms: 20,
-      }).save();
-      const adminUser = new User({
-        username:          process.env.DEFAULT_ADMIN_USERNAME || 'owner',
-        password:          process.env.DEFAULT_ADMIN_PASSWORD || 'owner123',
-        name:              'Dinesh Singh Thakur',
-        role:              'owner',
-        mobile:            '9826400917',
-        hostelId:          hostel._id,
-        mustChangePassword: true,
-      });
-      await adminUser.save();
-      logger.warn('Default owner created — CHANGE PASSWORD IMMEDIATELY via /change-password');
-    }
+const MONGO_URI = process.env.MONGODB_URI || 'mongodb://localhost:27017/hostel_management';
 
-    // Hourly notifications
-    try {
-      const { generateAutoNotifications } = require('./services/notifications');
-      setInterval(() => generateAutoNotifications().catch(() => {}), 60 * 60 * 1000);
-    } catch(e) {}
+const MONGOOSE_OPTS = {
+  serverSelectionTimeoutMS: 10000,  // give up initial connection after 10s
+  socketTimeoutMS:          45000,  // close sockets after 45s of inactivity
+  connectTimeoutMS:         10000,  // give up connecting after 10s
+  heartbeatFrequencyMS:     10000,  // check connection every 10s
+  maxPoolSize:              10,     // max 10 connections in pool
+  minPoolSize:              2,      // keep 2 connections warm
+  retryWrites:              true,
+  retryReads:               true,
+};
 
-    // Daily backup at 2 AM
-    const now    = new Date();
-    const next2am = new Date(now); next2am.setHours(2, 0, 0, 0);
-    if (next2am <= now) next2am.setDate(next2am.getDate() + 1);
-    setTimeout(() => {
-      runAutoBackup();
-      setInterval(runAutoBackup, 24 * 60 * 60 * 1000);
-    }, next2am - now);
-    logger.info('Daily backup scheduled');
-  })
-  .catch(err => logger.error('MongoDB error', { error: err.message }));
+function connectDB() {
+  mongoose.connect(MONGO_URI, MONGOOSE_OPTS)
+    .then(async () => {
+      logger.info('MongoDB connected');
+      const User   = require('./models/User');
+      const Hostel = require('./models/Hostel');
+      const count  = await User.countDocuments();
+      if (count === 0) {
+        const hostel = await new Hostel({
+          name: 'Shiv Kripa Hostel',
+          address: '1-B Shivkripa Colony Sajan Nagar, Indore',
+          totalRooms: 20,
+        }).save();
+        const adminUser = new User({
+          username:          process.env.DEFAULT_ADMIN_USERNAME || 'owner',
+          password:          process.env.DEFAULT_ADMIN_PASSWORD || 'owner123',
+          name:              'Dinesh Singh Thakur',
+          role:              'owner',
+          mobile:            '9826400917',
+          hostelId:          hostel._id,
+          mustChangePassword: true,
+        });
+        await adminUser.save();
+        logger.warn('Default owner created — CHANGE PASSWORD IMMEDIATELY');
+      }
+
+      // Hourly notifications
+      try {
+        const { generateAutoNotifications } = require('./services/notifications');
+        setInterval(() => generateAutoNotifications().catch(() => {}), 60 * 60 * 1000);
+      } catch(e) {}
+
+      // Daily backup at 2 AM
+      const now2    = new Date();
+      const next2am = new Date(now2); next2am.setHours(2, 0, 0, 0);
+      if (next2am <= now2) next2am.setDate(next2am.getDate() + 1);
+      setTimeout(() => {
+        runAutoBackup();
+        setInterval(runAutoBackup, 24 * 60 * 60 * 1000);
+      }, next2am - now2);
+      logger.info('Daily backup scheduled');
+    })
+    .catch(err => {
+      logger.error('MongoDB connection failed, retrying in 5s...', { error: err.message });
+      setTimeout(connectDB, 5000); // retry after 5s
+    });
+}
+
+// Auto-reconnect on disconnect
+mongoose.connection.on('disconnected', () => {
+  logger.warn('MongoDB disconnected — attempting reconnect...');
+  setTimeout(connectDB, 3000);
+});
+mongoose.connection.on('error', (err) => {
+  logger.error('MongoDB error', { error: err.message });
+});
+mongoose.connection.on('reconnected', () => {
+  logger.info('MongoDB reconnected');
+});
+
+connectDB();
 
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, '0.0.0.0', () => {
@@ -194,9 +235,10 @@ app.listen(PORT, '0.0.0.0', () => {
     const https = require('https');
     const host  = (process.env.RENDER_EXTERNAL_URL || 'hostel-management-rjka.onrender.com')
       .replace(/^https?:\/\//, '');
+    // Ping every 5 min to prevent Render free tier sleep
     setInterval(() => {
       https.get({ host, path: '/api/health', timeout: 8000 }, () => {}).on('error', () => {});
-    }, 10 * 60 * 1000);
-    logger.info(`Keep-alive ping active → ${host}`);
+    }, 5 * 60 * 1000);
+    logger.info(`Keep-alive ping every 5min → ${host}`);
   }
 });

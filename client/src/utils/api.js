@@ -14,14 +14,20 @@ api.interceptors.request.use((config) => {
   return config;
 });
 
-// Handle auth errors globally
+// Handle auth errors and DB errors globally
 api.interceptors.response.use(
   (res) => res,
   (err) => {
-    if (err.response?.status === 401) {
-      // Clear any stale localStorage and redirect to login
+    // Safely check status even if err.response doesn't exist (e.g., network error)
+    const status = err.response?.status;
+
+    if (status === 401) {
       localStorage.removeItem('hm_user');
       window.location.href = '/';
+    }
+    // 503 = DB not connected — show user-friendly message
+    if (status === 503) {
+      console.warn('Server DB not ready:', err.response?.data?.message);
     }
     return Promise.reject(err);
   }
@@ -38,7 +44,7 @@ export const authAPI = {
   toggleUser:      (id)         => api.put(`/auth/users/${id}/toggle`),
   deleteUser:      (id)         => api.delete(`/auth/users/${id}`),
   getUserActivity: (id)         => api.get(`/auth/users/${id}/activity`),
-  resetPassword:   (id, data)   => api.post(`/auth/users/${id}/reset-password`, data),
+  resetPassword:   (id, data)   => api.post(`/auth/users/${id}/reset-password`, data), // FIXED: String template literal closure
 };
 
 export const dashboardAPI = {

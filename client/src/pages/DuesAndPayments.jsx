@@ -78,6 +78,8 @@ export default function DuesAndPayments() {
   // ── Expiring soon — user-selectable date range (default: today → +7 days) ─
   const [expireFrom, setExpireFrom] = useState('');
   const [expireTo,   setExpireTo]   = useState('');
+  const [bulkDueFrom, setBulkDueFrom] = useState(''); // F3: date filter for bulk WA
+  const [bulkDueTo,   setBulkDueTo]   = useState('');
   const expireFromDate = expireFrom ? new Date(expireFrom) : (() => { const d = new Date(today); d.setHours(0,0,0,0); return d; })();
   const expireToDate   = expireTo   ? new Date(expireTo)   : (() => { const d = new Date(today); d.setDate(d.getDate()+7); return d; })();
   const expiringSoon = members.filter(m =>
@@ -246,37 +248,92 @@ export default function DuesAndPayments() {
                 <tbody>${rows}</tbody></table>`);
             }}>🖨 Print Dues List</button>
 
-            {/* F3: Bulk WhatsApp — sends reminder to every member with dues */}
-            <button className="btn btn-xs"
-              style={{background:'#25d366',color:'white',border:'none',fontWeight:700,cursor:'pointer',borderRadius:6,padding:'4px 10px'}}
-              onClick={() => {
-                const dueRooms = filterR(roomDues).filter(r => r.totalDue > 0 && r.memberMobiles?.length > 0);
-                if (dueRooms.length === 0) { alert('No rooms with dues and mobile numbers found'); return; }
-                if (!window.confirm(`Send WhatsApp reminders to ${dueRooms.length} room(s) with pending dues?`)) return;
-                dueRooms.forEach((r, idx) => {
-                  setTimeout(() => {
-                    const msg = [
-                      `🏠 *Hostel Rent Reminder*`,
-                      `━━━━━━━━━━━━━━━━`,
-                      `📅 Month: ${MONTHS[curMon-1]} ${curYr}`,
-                      `🚪 Room No: *${r.roomNumber}*`,
-                      ``,
-                      r.rentDue > 0 ? `🏠 Rent Due: *₹${r.rentDue.toLocaleString('en-IN')}*` : '',
-                      r.elecDue > 0 ? `⚡ Electric Due: *₹${r.elecDue.toLocaleString('en-IN')}*` : '',
-                      ``,
-                      `💰 *Total Pending: ₹${r.totalDue.toLocaleString('en-IN')}*`,
-                      ``,
-                      `Please clear dues at earliest. Late payment: ₹50/day fine.`,
-                      `Thank you 🙏`,
-                    ].filter(Boolean).join('\n');
-                    const num = `91${String(r.memberMobiles[0]).replace(/\D/g,'').slice(-10)}`;
-                    window.open(`https://wa.me/${num}?text=${encodeURIComponent(msg)}`, '_blank');
-                  }, idx * 1200); // 1.2s gap between each to avoid browser blocking
-                });
-                toast(`Opening WhatsApp for ${dueRooms.length} room(s)...`);
-              }}>
-              📱 Bulk WhatsApp ({filterR(roomDues).filter(r=>r.totalDue>0).length} due)
-            </button>
+            {/* F3: Bulk WhatsApp — date filter + one window per member */}
+            <div style={{display:'flex',gap:8,alignItems:'center',flexWrap:'wrap',marginTop:4,padding:'10px 12px',background:'rgba(37,211,102,0.05)',border:'1px solid rgba(37,211,102,0.2)',borderRadius:8}}>
+              <span style={{fontSize:'0.78rem',color:'var(--text3)',fontWeight:600,whiteSpace:'nowrap'}}>📱 Bulk WhatsApp — due since:</span>
+              <div style={{display:'flex',alignItems:'center',gap:4}}>
+                <label style={{fontSize:'0.72rem',color:'var(--text3)'}}>From</label>
+                <input type="date" value={bulkDueFrom} onChange={e=>setBulkDueFrom(e.target.value)}
+                  style={{background:'var(--bg3)',border:'1px solid var(--border2)',borderRadius:5,padding:'4px 7px',color:'var(--text)',fontSize:'0.78rem',outline:'none'}} />
+              </div>
+              <div style={{display:'flex',alignItems:'center',gap:4}}>
+                <label style={{fontSize:'0.72rem',color:'var(--text3)'}}>To</label>
+                <input type="date" value={bulkDueTo} onChange={e=>setBulkDueTo(e.target.value)}
+                  style={{background:'var(--bg3)',border:'1px solid var(--border2)',borderRadius:5,padding:'4px 7px',color:'var(--text)',fontSize:'0.78rem',outline:'none'}} />
+              </div>
+              {(bulkDueFrom||bulkDueTo) && (
+                <button className="btn btn-xs btn-secondary" onClick={()=>{setBulkDueFrom('');setBulkDueTo('');}}>✕</button>
+              )}
+              <button
+                style={{background:'#25d366',color:'white',border:'none',fontWeight:700,cursor:'pointer',borderRadius:6,padding:'6px 12px',fontSize:'0.8rem',marginLeft:'auto'}}
+                onClick={() => {
+                  // Build list of all individual members with dues
+                  const allDueMembers = [];
+                  filterR(roomDues).forEach(r => {
+                    if (r.totalDue <= 0) return;
+                    // Apply date filter on roomLeavingDate / joinDate if set
+                    if (bulkDueFrom || bulkDueTo) {
+                      const membersList = members.filter(m => m.roomNumber === r.roomNumber && m.isActive !== false);
+                      const filtered = membersList.filter(m => {
+                        const joinDate = m.roomJoinDate ? new Date(m.roomJoinDate) : null;
+                        if (bulkDueFrom && joinDate && joinDate < new Date(bulkDueFrom)) return false;
+                        if (bulkDueTo   && joinDate && joinDate > new Date(bulkDueTo))   return false;
+                        return true;
+                      });
+                      filtered.forEach(m => {
+                        if (m.mobileNo) allDueMembers.push({ member: m, room: r });
+                      });
+                    } else {
+                      // No date filter — include all members of due rooms
+                      (r.members || []).forEach(m => {
+                        if (m.mobileNo) allDueMembers.push({ member: m, room: r });
+                      });
+                    }
+                  });
+
+                  if (allDueMembers.length === 0) {
+                    alert('No members with dues found for the selected criteria.');
+                    return;
+                  }
+                  if (!window.confirm(`Send WhatsApp reminder to ${allDueMembers.length} member(s) across ${new Set(allDueMembers.map(x=>x.room.roomNumber)).size} room(s)?`)) return;
+
+                  // Open one WhatsApp window per member with 1.5s gap
+                  allDueMembers.forEach(({ member, room }, idx) => {
+                    setTimeout(() => {
+                      const daysDue = room.rentDue > 0
+                        ? Math.floor((new Date() - new Date(new Date().getFullYear(), curMon-1, 1)) / (1000*60*60*24))
+                        : 0;
+                      const msg = [
+                        `🏠 *Hostel Rent Reminder*`,
+                        `━━━━━━━━━━━━━━━━`,
+                        `📅 Month: ${MONTHS[curMon-1]} ${curYr}`,
+                        ``,
+                        `Dear *${member.name}*,`,
+                        `🚪 Room No: *${room.roomNumber}*`,
+                        ``,
+                        room.rentDue > 0 ? `🏠 Rent Due: *₹${room.rentDue.toLocaleString('en-IN')}*` : '',
+                        room.elecDue > 0 ? `⚡ Electric Due: *₹${room.elecDue.toLocaleString('en-IN')}*` : '',
+                        ``,
+                        `💰 *Total Pending: ₹${room.totalDue.toLocaleString('en-IN')}*`,
+                        daysDue > 0 ? `⏱ Due since: *${daysDue} day${daysDue!==1?'s':''} ago*` : '',
+                        ``,
+                        `Please clear dues at earliest.`,
+                        `Late payment fine: ₹50/day.`,
+                        ``,
+                        `Thank you 🙏`,
+                      ].filter(Boolean).join('\n');
+                      const num = `91${String(member.mobileNo).replace(/\D/g,'').slice(-10)}`;
+                      window.open(`https://wa.me/${num}?text=${encodeURIComponent(msg)}`, '_blank');
+                    }, idx * 1500);
+                  });
+                  toast(`Opening WhatsApp for ${allDueMembers.length} member(s)...`);
+                }}>
+                📱 Send to All Due ({filterR(roomDues).filter(r=>r.totalDue>0).reduce((s,r)=>{
+                  const mCount = (r.members||[]).filter(m=>m.mobileNo).length;
+                  return s + (mCount || 1);
+                }, 0)} members)
+              </button>
+            </div>
           </div>
 
           {/* Summary row */}

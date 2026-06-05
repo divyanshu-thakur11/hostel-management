@@ -180,6 +180,43 @@ export default function DuesAndPayments() {
     (r.memberMobile||'').includes(sq)
   );
 
+  // ── Room dues date range filter state ────────────────────────────────────
+  const [duesFrom, setDuesFrom] = useState('');
+  const [duesTo,   setDuesTo]   = useState('');
+
+  // Group expiringSoon by room — show only first member per room, rest as dropdown
+  const expiringSoonByRoom = (() => {
+    const byRoom = {};
+    expiringSoon.forEach(m => {
+      const rn = m.roomNumber || 'none';
+      if (!byRoom[rn]) byRoom[rn] = { primary: m, others: [] };
+      else byRoom[rn].others.push(m);
+    });
+    return Object.values(byRoom);
+  })();
+
+  // Room dues filtered by date range (receipts paid before duesTo, not yet after duesFrom)
+  const filteredRoomDues = (() => {
+    if (!duesFrom && !duesTo) return roomDues;
+    const from = duesFrom ? new Date(duesFrom) : null;
+    const to   = duesTo   ? new Date(duesTo)   : null;
+    return roomDues.map(r => {
+      // Re-calculate rent paid within the selected date range
+      const rentPaidInRange = receipts
+        .filter(rec =>
+          rec.roomNumber === r.roomNumber &&
+          (rec.packageName === 'rent' || rec.paymentType === 'rent') &&
+          rec.receiptDate &&
+          (!from || new Date(rec.receiptDate) >= from) &&
+          (!to   || new Date(rec.receiptDate) <= to)
+        )
+        .reduce((s, rec) => s + (rec.amountPaid || rec.totalAmount || 0), 0);
+      const rentDueInRange = Math.max(0, r.fixedRent - rentPaidInRange);
+      const totalDueInRange = rentDueInRange + r.elecDue;
+      return { ...r, rentPaidThisMonth: rentPaidInRange, rentDue: rentDueInRange, totalDue: totalDueInRange };
+    }).filter(r => r.totalDue > 0 || r.fixedRent > 0);
+  })();
+
   if (loading) return <div style={{ color:'var(--text2)', padding:40, textAlign:'center' }}>⏳ Loading dues...</div>;
 
   return (
@@ -227,23 +264,37 @@ export default function DuesAndPayments() {
       {tab === 'dues' && (
         <div>
           <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',flexWrap:'wrap',gap:10,marginBottom:12,padding:'10px 14px',background:'rgba(231,76,60,0.06)',borderRadius:6,fontSize:'0.83rem',color:'var(--text2)'}}>
-            <span>💡 Shows rent and electric dues for <strong>{MONTHS[curMon-1]} {curYr}</strong>. Rent due = Fixed room rent minus what's already been paid this month. Electric due = This month's meter reading bill minus what's been paid.</span>
+            <span>💡 Shows dues for <strong>{MONTHS[curMon-1]} {curYr}</strong>. Use date filter to narrow by payment date range.</span>
+
+            {/* Fix 3: Date filter for room dues */}
+            <div style={{display:'flex',gap:8,alignItems:'center',flexWrap:'wrap'}}>
+              <span style={{fontSize:'0.75rem',color:'var(--text3)'}}>Payments from:</span>
+              <input type="date" value={duesFrom} onChange={e=>setDuesFrom(e.target.value)}
+                style={{background:'var(--bg3)',border:'1px solid var(--border2)',borderRadius:5,padding:'4px 7px',color:'var(--text)',fontSize:'0.78rem',outline:'none'}} />
+              <span style={{fontSize:'0.75rem',color:'var(--text3)'}}>to:</span>
+              <input type="date" value={duesTo} onChange={e=>setDuesTo(e.target.value)}
+                style={{background:'var(--bg3)',border:'1px solid var(--border2)',borderRadius:5,padding:'4px 7px',color:'var(--text)',fontSize:'0.78rem',outline:'none'}} />
+              {(duesFrom||duesTo) && <button className="btn btn-xs btn-secondary" onClick={()=>{setDuesFrom('');setDuesTo('');}}>✕ Reset</button>}
+            </div>
+
             <button className="btn btn-secondary btn-xs" onClick={() => {
-              const rows = filterR(roomDues).map(r => `
+              const rows = filterR(filteredRoomDues).map(r => `
                 <tr>
                   <td><strong>Room ${r.roomNumber}</strong></td>
                   <td>${r.memberNames||'—'}</td>
                   <td>${r.memberCount}</td>
-                  <td class="${r.fixedRent?'':''}">₹${(r.fixedRent||0).toLocaleString('en-IN')}</td>
+                  <td>₹${(r.fixedRent||0).toLocaleString('en-IN')}</td>
                   <td class="green">₹${(r.rentPaidThisMonth||0).toLocaleString('en-IN')}</td>
                   <td class="${r.rentDue>0?'red':''}">₹${(r.rentDue||0).toLocaleString('en-IN')}</td>
                   <td>₹${(r.elecTotal||0).toLocaleString('en-IN')}</td>
                   <td class="${r.elecDue>0?'gold':''}">₹${(r.elecDue||0).toLocaleString('en-IN')}</td>
                   <td class="${r.totalDue>0?'red':'green'}"><strong>₹${(r.totalDue||0).toLocaleString('en-IN')}</strong></td>
                 </tr>`).join('');
-              doPrint(`Room Dues — ${MONTHS[curMon-1]} ${curYr}`, `
+              const totalRD = filteredRoomDues.reduce((s,r)=>s+r.rentDue,0);
+              const totalED = filteredRoomDues.reduce((s,r)=>s+r.elecDue,0);
+              doPrint(`Room Dues — ${MONTHS[curMon-1]} ${curYr}${duesFrom||duesTo?' (filtered)':''}`, `
                 <h2>Room Dues — ${MONTHS[curMon-1]} ${curYr}</h2>
-                <p>Total Rent Due: ₹${totalRentDue.toLocaleString('en-IN')} &nbsp;|&nbsp; Total Electric Due: ₹${totalElecDue.toLocaleString('en-IN')} &nbsp;|&nbsp; Grand Total: ₹${totalDueAll.toLocaleString('en-IN')}</p>
+                <p>Total Rent Due: ₹${totalRD.toLocaleString('en-IN')} &nbsp;|&nbsp; Total Electric Due: ₹${totalED.toLocaleString('en-IN')} &nbsp;|&nbsp; Grand Total: ₹${(totalRD+totalED).toLocaleString('en-IN')}</p>
                 <table><thead><tr><th>Room</th><th>Members</th><th>Count</th><th>Fixed Rent</th><th>Paid</th><th>Rent Due</th><th>Elec Bill</th><th>Elec Due</th><th>Total Due</th></tr></thead>
                 <tbody>${rows}</tbody></table>`);
             }}>🖨 Print Dues List</button>
@@ -269,7 +320,7 @@ export default function DuesAndPayments() {
                 onClick={() => {
                   // Build list of all individual members with dues
                   const allDueMembers = [];
-                  filterR(roomDues).forEach(r => {
+                  filterR(filteredRoomDues).forEach(r => {
                     if (r.totalDue <= 0) return;
                     // Apply date filter on roomLeavingDate / joinDate if set
                     if (bulkDueFrom || bulkDueTo) {
@@ -328,7 +379,7 @@ export default function DuesAndPayments() {
                   });
                   toast(`Opening WhatsApp for ${allDueMembers.length} member(s)...`);
                 }}>
-                📱 Send to All Due ({filterR(roomDues).filter(r=>r.totalDue>0).reduce((s,r)=>{
+                📱 Send to All Due ({filterR(filteredRoomDues).filter(r=>r.totalDue>0).reduce((s,r)=>{
                   const mCount = (r.members||[]).filter(m=>m.mobileNo).length;
                   return s + (mCount || 1);
                 }, 0)} members)
@@ -351,7 +402,7 @@ export default function DuesAndPayments() {
           </div>
 
           <div className="card">
-            {filterR(roomDues).length === 0 ? (
+            {filterR(filteredRoomDues).length === 0 ? (
               <div className="empty-state"><div className="empty-icon">✅</div><p>All rooms are paid up for this month!</p></div>
             ) : (
               <div className="table-wrap">
@@ -370,7 +421,7 @@ export default function DuesAndPayments() {
                     </tr>
                   </thead>
                   <tbody>
-                    {filterR(roomDues).map(r => (
+                    {filterR(filteredRoomDues).map(r => (
                       <tr key={r.roomNumber} style={{background:r.totalDue>0?'rgba(231,76,60,0.03)':'transparent'}}>
                         <td><span className="badge badge-blue" style={{fontSize:'0.85rem',fontWeight:700}}>Room {r.roomNumber}</span></td>
                         <td style={{fontSize:'0.78rem',color:'var(--text2)',maxWidth:120,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}} title={r.memberNames}>
@@ -419,14 +470,14 @@ export default function DuesAndPayments() {
                   </tbody>
                   <tfoot>
                     <tr style={{background:'var(--bg3)',fontWeight:700}}>
-                      <td colSpan={2} style={{padding:'8px 14px',color:'var(--text)'}}>TOTAL ({filterR(roomDues).length} rooms)</td>
-                      <td style={{padding:'8px 14px',color:'var(--text)'}}>{fmtM(filterR(roomDues).reduce((s,r)=>s+r.fixedRent,0))}</td>
-                      <td style={{padding:'8px 14px',color:'var(--success)'}}>{fmtM(filterR(roomDues).reduce((s,r)=>s+r.rentPaidThisMonth,0))}</td>
-                      <td style={{padding:'8px 14px',color:'var(--danger)'}}>{fmtM(filterR(roomDues).reduce((s,r)=>s+r.rentDue,0))}</td>
-                      <td style={{padding:'8px 14px'}}>{fmtM(filterR(roomDues).reduce((s,r)=>s+r.elecTotal,0))}</td>
-                      <td style={{padding:'8px 14px',color:'var(--success)'}}>{fmtM(filterR(roomDues).reduce((s,r)=>s+r.elecPaid,0))}</td>
-                      <td style={{padding:'8px 14px',color:'var(--accent)'}}>{fmtM(filterR(roomDues).reduce((s,r)=>s+r.elecDue,0))}</td>
-                      <td style={{padding:'8px 14px',color:'var(--danger)',fontWeight:700}}>{fmtM(filterR(roomDues).reduce((s,r)=>s+r.totalDue,0))}</td>
+                      <td colSpan={2} style={{padding:'8px 14px',color:'var(--text)'}}>TOTAL ({filterR(filteredRoomDues).length} rooms)</td>
+                      <td style={{padding:'8px 14px',color:'var(--text)'}}>{fmtM(filterR(filteredRoomDues).reduce((s,r)=>s+r.fixedRent,0))}</td>
+                      <td style={{padding:'8px 14px',color:'var(--success)'}}>{fmtM(filterR(filteredRoomDues).reduce((s,r)=>s+r.rentPaidThisMonth,0))}</td>
+                      <td style={{padding:'8px 14px',color:'var(--danger)'}}>{fmtM(filterR(filteredRoomDues).reduce((s,r)=>s+r.rentDue,0))}</td>
+                      <td style={{padding:'8px 14px'}}>{fmtM(filterR(filteredRoomDues).reduce((s,r)=>s+r.elecTotal,0))}</td>
+                      <td style={{padding:'8px 14px',color:'var(--success)'}}>{fmtM(filterR(filteredRoomDues).reduce((s,r)=>s+r.elecPaid,0))}</td>
+                      <td style={{padding:'8px 14px',color:'var(--accent)'}}>{fmtM(filterR(filteredRoomDues).reduce((s,r)=>s+r.elecDue,0))}</td>
+                      <td style={{padding:'8px 14px',color:'var(--danger)',fontWeight:700}}>{fmtM(filterR(filteredRoomDues).reduce((s,r)=>s+r.totalDue,0))}</td>
                       <td></td>
                     </tr>
                   </tfoot>
@@ -568,53 +619,114 @@ export default function DuesAndPayments() {
               <table>
                 <thead>
                   <tr>
-                    <th>Member</th><th>Room</th><th>Mobile</th>
+                    <th>Room</th><th>Primary Member</th><th>Mobile</th>
                     <th>Plan Expires</th><th>Days Left</th>
                     <th>Monthly Rent</th><th>Electric Due</th><th>Total Due</th>
                     <th>Action</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {filterM(expiringSoon).map(m => {
-                    const d    = Math.ceil((new Date(m.roomLeavingDate)-today)/(1000*60*60*24));
-                    const elec = getElecDueForRoom(m.roomNumber);
-                    const totalDueM = (m.rent||0) + elec.elecDue;
-                    return (
-                      <tr key={m._id}>
-                        <td style={{color:'var(--text)',fontWeight:600}}>{m.name}</td>
-                        <td>{m.roomNumber?<span className="badge badge-blue">Room {m.roomNumber}</span>:'—'}</td>
-                        <td style={{fontSize:'0.82rem'}}>{m.mobileNo||'—'}</td>
-                        <td style={{color:'var(--accent)'}}>{fmt(m.roomLeavingDate)}</td>
-                        <td>
-                          <span style={{background:d<=3?'rgba(231,76,60,0.12)':'rgba(240,165,0,0.12)',color:d<=3?'var(--danger)':'var(--accent)',padding:'2px 10px',borderRadius:10,fontWeight:700,fontSize:'0.8rem'}}>
-                            {d} day{d!==1?'s':''} left
-                          </span>
-                        </td>
-                        <td>{m.rent?fmtM(m.rent):'—'}</td>
-                        <td style={{color:elec.elecDue>0?'var(--accent)':'var(--text3)',fontWeight:elec.elecDue>0?600:400}}>
-                          {elec.elecDue>0 ? (
-                            <span title={`Bill: ₹${elec.elecTotal} — Paid: ₹${elec.elecPaid}`}>
-                              {fmtM(elec.elecDue)}
-                              {elec.elecTotal>0 && <span style={{fontSize:'0.7rem',color:'var(--text3)',marginLeft:4}}>of ₹{elec.elecTotal.toLocaleString('en-IN')}</span>}
-                            </span>
-                          ) : <span style={{color:'var(--text3)'}}>—</span>}
-                        </td>
-                        <td style={{color:totalDueM>0?'var(--danger)':'var(--text3)',fontWeight:totalDueM>0?700:400}}>
-                          {totalDueM>0 ? fmtM(totalDueM) : '—'}
-                        </td>
-                        <td>
-                          <div style={{display:'flex',gap:4,flexWrap:'wrap'}}>
-                            {m.mobileNo && (
-                              <button style={{background:'#25d366',color:'white',border:'none',borderRadius:5,padding:'4px 8px',cursor:'pointer',fontSize:'0.72rem',fontWeight:700}}
-                                onClick={()=>wa.sendReminder(m.mobileNo,m.name,m.roomNumber,m.rent||0,'stay renewal')}>
-                                📱 Remind
-                              </button>
-                            )}
-                          </div>
-                        </td>
-                      </tr>
-                    );
-                  })}
+                  {expiringSoonByRoom
+                    .filter(g => !search ||
+                      (g.primary.name||'').toLowerCase().includes(sq) ||
+                      String(g.primary.roomNumber||'').includes(sq) ||
+                      (g.primary.mobileNo||'').includes(sq))
+                    .map(({ primary: m, others }) => {
+                      const d     = Math.ceil((new Date(m.roomLeavingDate)-today)/(1000*60*60*24));
+                      const elec  = getElecDueForRoom(m.roomNumber);
+                      const totalDueM = (m.rent||0) + elec.elecDue;
+                      return (
+                        <React.Fragment key={m._id}>
+                          <tr style={{background:d<=3?'rgba(231,76,60,0.04)':'transparent'}}>
+                            <td>
+                              {m.roomNumber ? <span className="badge badge-blue">Room {m.roomNumber}</span> : '—'}
+                              {others.length > 0 && (
+                                <span style={{fontSize:'0.68rem',color:'var(--text3)',marginLeft:4}}>+{others.length} more</span>
+                              )}
+                            </td>
+                            <td style={{color:'var(--text)',fontWeight:600}}>{m.name}</td>
+                            <td style={{fontSize:'0.82rem'}}>{m.mobileNo||'—'}</td>
+                            <td style={{color:'var(--accent)'}}>{fmt(m.roomLeavingDate)}</td>
+                            <td>
+                              <span style={{background:d<=3?'rgba(231,76,60,0.12)':'rgba(240,165,0,0.12)',color:d<=3?'var(--danger)':'var(--accent)',padding:'2px 10px',borderRadius:10,fontWeight:700,fontSize:'0.8rem'}}>
+                                {d} day{d!==1?'s':''} left
+                              </span>
+                            </td>
+                            <td>{m.rent?fmtM(m.rent):'—'}</td>
+                            <td style={{color:elec.elecDue>0?'var(--accent)':'var(--text3)',fontWeight:elec.elecDue>0?600:400}}>
+                              {elec.elecDue>0
+                                ? <span title={`Bill: ₹${elec.elecTotal} — Paid: ₹${elec.elecPaid}`}>{fmtM(elec.elecDue)}</span>
+                                : <span style={{color:'var(--text3)'}}>—</span>}
+                            </td>
+                            <td style={{color:totalDueM>0?'var(--danger)':'var(--text3)',fontWeight:totalDueM>0?700:400}}>
+                              {totalDueM>0 ? fmtM(totalDueM) : '—'}
+                            </td>
+                            <td>
+                              {m.mobileNo && (
+                                <button style={{background:'#25d366',color:'white',border:'none',borderRadius:5,padding:'4px 8px',cursor:'pointer',fontSize:'0.72rem',fontWeight:700}}
+                                  onClick={() => {
+                                    const allInRoom = [m, ...others];
+                                    const names = allInRoom.map(x=>x.name).join(', ');
+                                    const msg = [
+                                      `🏠 *Hostel Renewal Reminder*`,
+                                      `━━━━━━━━━━━━━━━━`,
+                                      `Dear *${names}*,`,
+                                      `🚪 Room No: *${m.roomNumber}*`,
+                                      ``,
+                                      `⏰ Your stay plan expires on: *${fmt(m.roomLeavingDate)}*`,
+                                      `⏱ Only *${d} day${d!==1?'s':''} left*`,
+                                      ``,
+                                      m.rent ? `🏠 Monthly Rent: ₹${(m.rent||0).toLocaleString('en-IN')}` : '',
+                                      elec.elecDue > 0 ? `⚡ Electric Due: *₹${elec.elecDue.toLocaleString('en-IN')}*` : '',
+                                      totalDueM > 0 ? `💰 *Total Due: ₹${totalDueM.toLocaleString('en-IN')}*` : '',
+                                      ``,
+                                      `Please renew your stay and clear all dues.`,
+                                      `Late payment fine: ₹50/day.`,
+                                      ``,
+                                      `Thank you 🙏`,
+                                    ].filter(Boolean).join('\n');
+                                    const num = `91${String(m.mobileNo).replace(/\D/g,'').slice(-10)}`;
+                                    window.open(`https://wa.me/${num}?text=${encodeURIComponent(msg)}`, '_blank');
+                                  }}>
+                                  📱 Remind
+                                </button>
+                              )}
+                            </td>
+                          </tr>
+                          {/* Dropdown rows for other members in same room */}
+                          {others.map(om => (
+                            <tr key={om._id} style={{background:'var(--bg3)',opacity:0.85}}>
+                              <td style={{paddingLeft:24,color:'var(--text3)',fontSize:'0.78rem'}}>↳ same room</td>
+                              <td style={{color:'var(--text2)',fontSize:'0.85rem'}}>{om.name}</td>
+                              <td style={{fontSize:'0.78rem',color:'var(--text3)'}}>{om.mobileNo||'—'}</td>
+                              <td style={{fontSize:'0.78rem',color:'var(--text3)'}}>{fmt(om.roomLeavingDate)}</td>
+                              <td colSpan={4} />
+                              <td>
+                                {om.mobileNo && (
+                                  <button style={{background:'#25d366',color:'white',border:'none',borderRadius:5,padding:'3px 7px',cursor:'pointer',fontSize:'0.7rem',fontWeight:700}}
+                                    onClick={() => {
+                                      const dOm = Math.ceil((new Date(om.roomLeavingDate)-today)/(1000*60*60*24));
+                                      const msg = [
+                                        `🏠 *Hostel Renewal Reminder*`,
+                                        `Dear *${om.name}*,`,
+                                        `🚪 Room No: *${om.roomNumber}*`,
+                                        `⏰ Plan expires: *${fmt(om.roomLeavingDate)}* (${dOm} days left)`,
+                                        om.rent ? `🏠 Rent: ₹${(om.rent||0).toLocaleString('en-IN')}` : '',
+                                        elec.elecDue > 0 ? `⚡ Electric Due: ₹${elec.elecDue.toLocaleString('en-IN')}` : '',
+                                        ``,`Please renew and clear dues. Thank you 🙏`,
+                                      ].filter(Boolean).join('\n');
+                                      const num = `91${String(om.mobileNo).replace(/\D/g,'').slice(-10)}`;
+                                      window.open(`https://wa.me/${num}?text=${encodeURIComponent(msg)}`, '_blank');
+                                    }}>
+                                    📱
+                                  </button>
+                                )}
+                              </td>
+                            </tr>
+                          ))}
+                        </React.Fragment>
+                      );
+                    })}
                 </tbody>
               </table>
             </div>

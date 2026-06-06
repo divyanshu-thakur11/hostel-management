@@ -294,10 +294,24 @@ export default function DuesAndPayments() {
           <div style={{display:'flex',justifyContent:'flex-end',marginBottom:10}}>
             <button className="btn btn-secondary btn-xs" onClick={() => {
               const rows = dueDateRooms.map(g => {
-                const m = g.primary;
+                // Get plan expiry from members state for this room
+                const roomMems = members.filter(m => m.roomNumber === g.roomNumber && m.isActive !== false);
+                const mobile = roomMems[0]?.mobileNo || g.mobileNo || '—';
+                // Find the soonest expiry among all members in the room
+                const expiries = roomMems.map(m => m.roomLeavingDate).filter(Boolean).map(d => new Date(d));
+                let expiryStr = '—';
+                if (expiries.length > 0) {
+                  const soonest = new Date(Math.min(...expiries));
+                  const diffDays = Math.ceil((soonest - today) / (1000 * 60 * 60 * 24));
+                  if (diffDays < 0)      expiryStr = `Expired ${Math.abs(diffDays)}d ago`;
+                  else if (diffDays === 0) expiryStr = 'Expires today';
+                  else                   expiryStr = `${diffDays}d left`;
+                }
                 return `<tr>
                   <td><strong>Room ${g.roomNumber}</strong></td>
                   <td>${g.memberNames}</td>
+                  <td>${mobile}</td>
+                  <td class="${expiries.length && Math.ceil((new Date(Math.min(...expiries))-today)/(1000*60*60*24)) < 0 ? 'red' : expiries.length && Math.ceil((new Date(Math.min(...expiries))-today)/(1000*60*60*24)) <= 7 ? 'gold' : 'green'}">${expiryStr}</td>
                   <td class="red">₹${(g.rentDue||0).toLocaleString('en-IN')}</td>
                   <td class="${g.elecDue>0?'gold':''}">₹${(g.elecDue||0).toLocaleString('en-IN')}</td>
                   <td class="${g.partDue>0?'purple':''}">₹${(g.partDue||0).toLocaleString('en-IN')}</td>
@@ -308,7 +322,7 @@ export default function DuesAndPayments() {
               doPrint(`Room Dues as of ${today.toLocaleDateString('en-IN')}`, `
                 <h2>Rooms with Outstanding Dues — as of ${today.toLocaleDateString('en-IN')}</h2>
                 <p>Grand Total Due: ₹${totalDueAll.toLocaleString('en-IN')} across ${dueDateRooms.length} rooms</p>
-                <table><thead><tr><th>Room</th><th>Members</th><th>Rent Due</th><th>Electric Due</th><th>Part-Pay Balance</th><th>Total Due</th><th>Days Due</th></tr></thead>
+                <table><thead><tr><th>Room</th><th>Members</th><th>Mobile</th><th>Plan Expiry</th><th>Rent Due</th><th>Electric Due</th><th>Part-Pay Balance</th><th>Total Due</th><th>Days Due</th></tr></thead>
                 <tbody>${rows}</tbody></table>`);
             }}>🖨 Print Dues List</button>
           </div>

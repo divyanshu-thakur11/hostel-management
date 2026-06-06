@@ -135,8 +135,8 @@ export default function DuesAndPayments() {
       // Electric: current month's reading
       const elecReading = electric.find(e => e.roomNumber === rNum && e.month === curMon && e.year === curYr);
       const elecTotal = elecReading?.totalAmount || 0;
-      // Electric paid this month
-      const elecPaid = receipts
+      // Electric paid this month — via explicit electric receipts
+      const elecPaidDirect = receipts
         .filter(rec =>
           rec.roomNumber === rNum &&
           (rec.packageName === 'electric' || rec.paymentType === 'electric') &&
@@ -145,6 +145,15 @@ export default function DuesAndPayments() {
           new Date(rec.receiptDate).getFullYear() === curYr
         )
         .reduce((s, rec) => s + (rec.amountPaid ?? rec.totalAmount ?? 0), 0);
+      // Electric also paid if a 'final' receipt this month includes it in its notes
+      // e.g. notes = "Final Bill: Rent ₹5000 + Electric Jun: ₹800 + Pending ₹200"
+      const elecPaidInFinal = roomReceiptsThisMonth
+        .filter(rec => (rec.packageName === 'final' || rec.paymentType === 'final'))
+        .reduce((s, rec) => {
+          const m = (rec.notes || '').match(/Electric\s+[\w]+:\s*₹([\d,]+)/);
+          return s + (m ? parseInt(m[1].replace(/,/g, '')) : 0);
+        }, 0);
+      const elecPaid = elecPaidDirect + elecPaidInFinal;
       const elecDue = Math.max(0, elecTotal - elecPaid);
 
       return {

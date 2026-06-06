@@ -190,19 +190,8 @@ export default function FinalBilling() {
 
                 {/* Rent */}
                 {rentReceipts.length > 0 && <BillTable title="Rent Payments" rows={rentReceipts.map(r=>[r.billNumber||'—',fmt(r.receiptDate),fmt(r.fromDate),fmt(r.toDate),r.modeOfPayment,`₹${(r.amountPaid||r.totalAmount||0).toLocaleString('en-IN')}`])} headers={['Bill No.','Date','From','To','Mode','Amount']} total={totalRentPaid} />}
-                {finalReceipts.length > 0 && <BillTable title="Final Bill Payments" rows={finalReceipts.map(r => {
-                  const notes = r.notes || '';
-                  // Parse breakdown from notes: "Final Bill: Rent ₹5000 + Electric Jun: ₹800 + Pending ₹200"
-                  const rentMatch  = notes.match(/Rent\s*₹([\d,]+)/);
-                  const elecMatch  = notes.match(/Electric\s+[\w]+:\s*₹([\d,]+)/);
-                  const pendMatch  = notes.match(/Pending\s*₹([\d,]+)/);
-                  const breakdown = [
-                    rentMatch  ? `Rent: ₹${rentMatch[1]}`          : null,
-                    elecMatch  ? `⚡ Elec: ₹${elecMatch[1]}`       : null,
-                    pendMatch  ? `Pending: ₹${pendMatch[1]}`        : null,
-                  ].filter(Boolean).join(' | ') || '—';
-                  return [r.billNumber||'—', fmt(r.receiptDate), r.modeOfPayment, breakdown, `₹${(r.amountPaid||r.totalAmount||0).toLocaleString('en-IN')}`];
-                })} headers={['Bill No.','Date','Mode','Breakdown','Amount']} total={totalFinalPaid} />}
+                {/* Final Bill */}
+                {finalReceipts.length > 0 && <BillTable title="Final Bill Payments" rows={finalReceipts.map(r=>[r.billNumber||'—',fmt(r.receiptDate),fmt(r.fromDate),fmt(r.toDate),r.modeOfPayment,`₹${(r.amountPaid||r.totalAmount||0).toLocaleString('en-IN')}`])} headers={['Bill No.','Date','From','To','Mode','Amount']} total={totalFinalPaid} />}
                 {/* Advance */}
                 {advanceReceipts.length > 0 && <BillTable title="Advance Payments" rows={advanceReceipts.map(r=>[r.billNumber||'—',fmt(r.receiptDate),r.modeOfPayment,`₹${(r.amountPaid||r.totalAmount||0).toLocaleString('en-IN')}`])} headers={['Bill No.','Date','Mode','Amount']} total={totalAdvancePaid} />}
                 {/* Electric */}
@@ -212,25 +201,17 @@ export default function FinalBilling() {
 
                 {/* Grand Total */}
                 <div style={{display:'flex',justifyContent:'flex-end',marginTop:16}}>
-                  <table style={{width:'320px',borderCollapse:'collapse',fontSize:'13px'}}>
+                  <table style={{width:'280px',borderCollapse:'collapse',fontSize:'13px'}}>
                     <tbody>
-                      {(() => {
-                        // Extract electric amount embedded in final receipts (from notes)
-                        const elecInFinal = finalReceipts.reduce((s, r) => {
-                          const m = (r.notes||'').match(/Electric\s+[\w]+:\s*₹([\d,]+)/);
-                          return s + (m ? parseInt(m[1].replace(/,/g,'')) : 0);
-                        }, 0);
-                        const rows2 = [
-                          ['Total Rent',             `₹${totalRentPaid.toLocaleString('en-IN')}`],
-                          ['Final Bill',             `₹${totalFinalPaid.toLocaleString('en-IN')}` + (elecInFinal > 0 ? ` (incl. ⚡₹${elecInFinal.toLocaleString('en-IN')})` : '')],
-                          ['Total Advance',          `₹${totalAdvancePaid.toLocaleString('en-IN')}`],
-                          ['Electric Bills (separate)', `₹${totalElectricBill.toLocaleString('en-IN')}`],
-                          ['Other',                  `₹${totalOtherPaid.toLocaleString('en-IN')}`],
-                        ];
-                        return rows2.map(([l,v],i) => (
-                          <tr key={i}><td style={{padding:'5px 10px',color:'#555'}}>{l}</td><td style={{padding:'5px 10px',textAlign:'right',fontWeight:500}}>{v}</td></tr>
-                        ));
-                      })()}
+                      {[
+                        ['Total Rent',    `₹${totalRentPaid.toLocaleString('en-IN')}`],
+                        ['Final Bill',    `₹${totalFinalPaid.toLocaleString('en-IN')}`],
+                        ['Total Advance', `₹${totalAdvancePaid.toLocaleString('en-IN')}`],
+                        ['Total Electric',`₹${totalElectricBill.toLocaleString('en-IN')}`],
+                        ['Other',         `₹${totalOtherPaid.toLocaleString('en-IN')}`],
+                      ].map(([l,v],i)=>(
+                        <tr key={i}><td style={{padding:'5px 10px',color:'#555'}}>{l}</td><td style={{padding:'5px 10px',textAlign:'right',fontWeight:500}}>{v}</td></tr>
+                      ))}
                       <tr style={{background:'#111',color:'white',fontWeight:700,fontSize:'14px'}}>
                         <td style={{padding:'8px 10px'}}>GRAND TOTAL</td>
                         <td style={{padding:'8px 10px',textAlign:'right'}}>₹{grandTotal.toLocaleString('en-IN')}</td>

@@ -66,8 +66,10 @@ function TaxSummary({ receipts, salary }) {
 
   const rentIncome    = yearReceipts.filter(r=>r.packageName==='rent').reduce((s,r)=>s+(r.amountPaid||r.totalAmount||0),0);
   const electricIncome= yearReceipts.filter(r=>r.packageName==='electric').reduce((s,r)=>s+(r.amountPaid||r.totalAmount||0),0);
-  const otherIncome   = yearReceipts.filter(r=>!['rent','electric','advance'].includes(r.packageName)).reduce((s,r)=>s+(r.amountPaid||r.totalAmount||0),0);
-  const grossIncome   = rentIncome + electricIncome + otherIncome;
+  const advanceIncome = yearReceipts.filter(r=>r.packageName==='advance').reduce((s,r)=>s+(r.amountPaid||r.totalAmount||0),0);
+  const finalIncome   = yearReceipts.filter(r=>r.packageName==='final').reduce((s,r)=>s+(r.amountPaid||r.totalAmount||0),0);
+  const otherIncome   = yearReceipts.filter(r=>!['rent','electric','advance','final'].includes(r.packageName)).reduce((s,r)=>s+(r.amountPaid||r.totalAmount||0),0);
+  const grossIncome   = rentIncome + electricIncome + advanceIncome + finalIncome + otherIncome;
   const salaryExp     = yearSalary.reduce((s,r)=>s+(r.netSalary||0),0);
   const maintExp      = yearSalary.reduce((s,r)=>s+(r.maintenanceCosts||[]).reduce((a,c)=>a+(c.amount||0),0),0);
   const totalExpenses = salaryExp + maintExp;
@@ -89,6 +91,8 @@ function TaxSummary({ receipts, salary }) {
       <table><thead><tr><th>Income Head</th><th class="right">Amount (₹)</th></tr></thead><tbody>
         <tr><td>Rent Collected</td><td class="right">₹${rentIncome.toLocaleString('en-IN')}</td></tr>
         <tr><td>Electric Bill Collected</td><td class="right">₹${electricIncome.toLocaleString('en-IN')}</td></tr>
+        <tr><td>Advance Received</td><td class="right">₹${advanceIncome.toLocaleString('en-IN')}</td></tr>
+        <tr><td>Final Bills Collected</td><td class="right">₹${finalIncome.toLocaleString('en-IN')}</td></tr>
         <tr><td>Other Income</td><td class="right">₹${otherIncome.toLocaleString('en-IN')}</td></tr>
         <tr class="total"><td>Total Gross Income</td><td class="right">₹${grossIncome.toLocaleString('en-IN')}</td></tr>
       </tbody></table>
@@ -130,9 +134,11 @@ function TaxSummary({ receipts, salary }) {
           <div style={{background:'rgba(46,204,113,0.04)',border:'1px solid rgba(46,204,113,0.2)',borderRadius:8,padding:'14px 16px'}}>
             <div style={{fontFamily:'Rajdhani',fontWeight:700,color:'var(--success)',marginBottom:12,fontSize:'0.9rem',textTransform:'uppercase',letterSpacing:'0.05em'}}>📥 Income</div>
             {[
-              {label:'Rent Collected',    value:rentIncome},
-              {label:'Electric Collected',value:electricIncome},
-              {label:'Other Income',      value:otherIncome},
+              {label:'Rent Collected',     value:rentIncome},
+              {label:'Electric Collected', value:electricIncome},
+              {label:'Advance Received',   value:advanceIncome},
+              {label:'Final Bills',        value:finalIncome},
+              {label:'Other Income',       value:otherIncome},
             ].map((row,i)=>(
               <div key={i} style={{display:'flex',justifyContent:'space-between',padding:'7px 0',borderBottom:'1px dashed var(--border)',fontSize:'0.85rem'}}>
                 <span style={{color:'var(--text2)'}}>{row.label}</span>
@@ -449,6 +455,7 @@ export default function Reports() {
     { id:'rooms',     label:'🏠 Rooms'     },
     { id:'payments',  label:'🧾 Payments'  },
     { id:'members',   label:'👥 Members'   },
+    { id:'register',  label:'📋 Rent Register' },
     { id:'tax',       label:'🧾 Tax Summary' },
     { id:'export',    label:'💾 Export'    },
   ];
@@ -904,6 +911,146 @@ export default function Reports() {
         </div>
       )}
 
+
+      {/* ════════════════════════════════════════════════════════
+          RENT COLLECTION REGISTER TAB
+      ════════════════════════════════════════════════════════ */}
+      {tab === 'register' && (() => {
+        // Build last 12 months list
+        const months = [];
+        for (let i = 11; i >= 0; i--) {
+          const d = new Date();
+          d.setDate(1);
+          d.setMonth(d.getMonth() - i);
+          months.push({ year: d.getFullYear(), month: d.getMonth() + 1, label: d.toLocaleString('en-IN', { month: 'short', year: '2-digit' }) });
+        }
+
+        // All occupied rooms (from members)
+        const roomNums = [...new Set(members.filter(m => m.roomNumber && m.isActive !== false).map(m => m.roomNumber))].sort((a, b) => a - b);
+
+        // Build lookup: "roomNum-year-month" → amountPaid
+        const paidMap = {};
+        receipts.forEach(r => {
+          if (!r.roomNumber || !r.receiptDate) return;
+          const type = r.packageName || r.paymentType || '';
+          if (type === 'electric') return; // only rent-type payments
+          const d = new Date(r.receiptDate);
+          const key = `${r.roomNumber}-${d.getFullYear()}-${d.getMonth() + 1}`;
+          paidMap[key] = (paidMap[key] || 0) + (r.amountPaid ?? r.totalAmount ?? 0);
+        });
+
+        // Room name lookup
+        const roomMemberNames = {};
+        members.filter(m => m.isActive !== false && m.roomNumber).forEach(m => {
+          if (!roomMemberNames[m.roomNumber]) roomMemberNames[m.roomNumber] = m.name;
+        });
+
+        const curMon2 = new Date().getMonth() + 1;
+        const curYr2  = new Date().getFullYear();
+
+        const printRegister = () => {
+          const headerCols = months.map(m => `<th style="min-width:52px;text-align:center;font-size:10px">${m.label}</th>`).join('');
+          const bodyRows = roomNums.map(rn => {
+            const cells = months.map(({ year, month }) => {
+              const key = `${rn}-${year}-${month}`;
+              const paid = paidMap[key] || 0;
+              const isFuture = year > curYr2 || (year === curYr2 && month > curMon2);
+              if (isFuture) return `<td style="text-align:center;background:#f5f5f5;color:#aaa;font-size:10px">—</td>`;
+              if (paid > 0) return `<td style="text-align:center;background:#d4edda;color:#155724;font-weight:700;font-size:10px">₹${(paid/1000).toFixed(0)}k</td>`;
+              return `<td style="text-align:center;background:#f8d7da;color:#721c24;font-size:11px;font-weight:700">✗</td>`;
+            }).join('');
+            return `<tr><td style="font-weight:600;white-space:nowrap;font-size:11px">Rm ${rn}</td><td style="font-size:10px;color:#666;white-space:nowrap">${roomMemberNames[rn]||'—'}</td>${cells}</tr>`;
+          }).join('');
+          const w = window.open('','_blank');
+          w.document.write(`<!DOCTYPE html><html><head><title>Rent Collection Register</title>
+            <style>*{box-sizing:border-box;margin:0;padding:0;}body{font-family:Arial,sans-serif;font-size:11px;padding:16px;}
+            h2{font-size:1rem;margin-bottom:4px;}p{color:#666;font-size:0.75rem;margin-bottom:12px;}
+            table{border-collapse:collapse;width:100%;}th,td{border:1px solid #ddd;padding:5px 6px;}
+            th{background:#f5f5f5;font-size:10px;text-transform:uppercase;}
+            @media print{@page{margin:6mm;size:A4 landscape;}}</style>
+            </head><body>
+            <h2>Rent Collection Register</h2>
+            <p>Last 12 months · ✓ = paid · ✗ = not paid · Generated ${new Date().toLocaleDateString('en-IN')}</p>
+            <table><thead><tr><th>Room</th><th>Primary Member</th>${headerCols}</tr></thead>
+            <tbody>${bodyRows}</tbody></table>
+            </body></html>`);
+          w.document.close();
+          setTimeout(() => w.print(), 400);
+        };
+
+        const paidCount   = roomNums.filter(rn => { const { year, month } = months[months.length-1]; return (paidMap[`${rn}-${year}-${month}`]||0)>0; }).length;
+        const unpaidCount = roomNums.length - paidCount;
+
+        return (
+          <div>
+            <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:14,flexWrap:'wrap',gap:10}}>
+              <div style={{display:'flex',gap:14,flexWrap:'wrap'}}>
+                <div className="card" style={{padding:'10px 16px',display:'flex',gap:10,alignItems:'center'}}>
+                  <span style={{fontSize:'1.2rem'}}>✅</span>
+                  <div><div style={{fontSize:'0.68rem',color:'var(--text3)',textTransform:'uppercase'}}>Paid This Month</div><div style={{fontFamily:'Rajdhani',fontSize:'1.4rem',fontWeight:700,color:'var(--success)'}}>{paidCount} rooms</div></div>
+                </div>
+                <div className="card" style={{padding:'10px 16px',display:'flex',gap:10,alignItems:'center'}}>
+                  <span style={{fontSize:'1.2rem'}}>❌</span>
+                  <div><div style={{fontSize:'0.68rem',color:'var(--text3)',textTransform:'uppercase'}}>Unpaid This Month</div><div style={{fontFamily:'Rajdhani',fontSize:'1.4rem',fontWeight:700,color:'var(--danger)'}}>{unpaidCount} rooms</div></div>
+                </div>
+              </div>
+              <button className="btn btn-secondary btn-xs" onClick={printRegister}>🖨 Print Register</button>
+            </div>
+
+            <div className="card" style={{padding:0,overflow:'hidden'}}>
+              <div style={{overflowX:'auto'}}>
+                <table style={{borderCollapse:'collapse',width:'100%',fontSize:'0.78rem'}}>
+                  <thead>
+                    <tr style={{background:'var(--bg3)'}}>
+                      <th style={{padding:'10px 12px',textAlign:'left',fontWeight:700,color:'var(--text3)',fontSize:'0.68rem',textTransform:'uppercase',whiteSpace:'nowrap',position:'sticky',left:0,background:'var(--bg3)',zIndex:2}}>Room</th>
+                      <th style={{padding:'10px 12px',textAlign:'left',fontWeight:700,color:'var(--text3)',fontSize:'0.68rem',textTransform:'uppercase',whiteSpace:'nowrap',position:'sticky',left:60,background:'var(--bg3)',zIndex:2,minWidth:100}}>Member</th>
+                      {months.map(m => (
+                        <th key={m.label} style={{padding:'8px 6px',textAlign:'center',fontWeight:700,color: m.year===curYr2&&m.month===curMon2 ? 'var(--accent)':'var(--text3)',fontSize:'0.65rem',textTransform:'uppercase',minWidth:52, background: m.year===curYr2&&m.month===curMon2 ? 'rgba(var(--accent-rgb,240,165,0),0.07)':'var(--bg3)'}}>{m.label}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {roomNums.map((rn, ri) => (
+                      <tr key={rn} style={{borderBottom:'1px solid var(--border)',background:ri%2===0?'transparent':'var(--bg2)'}}>
+                        <td style={{padding:'8px 12px',fontWeight:700,color:'var(--accent)',whiteSpace:'nowrap',position:'sticky',left:0,background:ri%2===0?'var(--bg)':'var(--bg2)',zIndex:1}}>
+                          <span className="badge badge-blue" style={{fontSize:'0.7rem'}}>Rm {rn}</span>
+                        </td>
+                        <td style={{padding:'8px 12px',color:'var(--text2)',fontSize:'0.75rem',whiteSpace:'nowrap',position:'sticky',left:60,background:ri%2===0?'var(--bg)':'var(--bg2)',zIndex:1,maxWidth:110,overflow:'hidden',textOverflow:'ellipsis'}}>{roomMemberNames[rn]||'—'}</td>
+                        {months.map(({ year, month, label }) => {
+                          const key = `${rn}-${year}-${month}`;
+                          const paid = paidMap[key] || 0;
+                          const isFuture = year > curYr2 || (year === curYr2 && month > curMon2);
+                          const isCurr   = year === curYr2 && month === curMon2;
+                          if (isFuture) return (
+                            <td key={label} style={{textAlign:'center',color:'var(--text3)',fontSize:'0.7rem',background:'var(--bg3)'}}>—</td>
+                          );
+                          if (paid > 0) return (
+                            <td key={label} style={{textAlign:'center',background:'rgba(46,204,113,0.12)',border: isCurr?'2px solid var(--success)':'none'}}>
+                              <div style={{fontWeight:700,color:'var(--success)',fontSize:'0.72rem'}}>✓</div>
+                              <div style={{fontSize:'0.62rem',color:'var(--text3)'}}>₹{paid>=1000?(paid/1000).toFixed(1)+'k':paid}</div>
+                            </td>
+                          );
+                          return (
+                            <td key={label} style={{textAlign:'center',background:isCurr?'rgba(231,76,60,0.1)':'rgba(231,76,60,0.05)',border:isCurr?'2px solid var(--danger)':'none'}}>
+                              <span style={{color:'var(--danger)',fontWeight:700,fontSize:'0.85rem'}}>✗</span>
+                            </td>
+                          );
+                        })}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <div style={{padding:'10px 16px',fontSize:'0.72rem',color:'var(--text3)',borderTop:'1px solid var(--border)',display:'flex',gap:20,flexWrap:'wrap'}}>
+                <span><span style={{color:'var(--success)',fontWeight:700}}>✓ Green</span> = rent paid (any type except electric)</span>
+                <span><span style={{color:'var(--danger)',fontWeight:700}}>✗ Red</span> = no payment recorded</span>
+                <span><strong style={{color:'var(--accent)'}}>Bold border</strong> = current month</span>
+                <span>Amounts shown are total non-electric receipts for that month</span>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* ════════════════════════════════════════════════════════
           TAX SUMMARY TAB

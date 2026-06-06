@@ -44,19 +44,38 @@ export default function FinalBilling() {
   const rentReceipts     = roomReceipts.filter(r => r.paymentType==='rent'     || r.packageName==='rent');
   const advanceReceipts  = roomReceipts.filter(r => r.paymentType==='advance'  || r.packageName==='advance');
   const electricReceipts = roomReceipts.filter(r => r.paymentType==='electric' || r.packageName==='electric');
-  const otherReceipts    = roomReceipts.filter(r => !['rent','advance','electric'].includes(r.paymentType||r.packageName));
+  const finalReceipts    = roomReceipts.filter(r => r.paymentType==='final'    || r.packageName==='final');
+  const otherReceipts    = roomReceipts.filter(r => !['rent','advance','electric','final'].includes(r.paymentType||r.packageName));
 
-  const totalRentPaid    = rentReceipts.reduce((s,r) => s+(r.totalAmount||0), 0);
-  const totalAdvancePaid = advanceReceipts.reduce((s,r) => s+(r.totalAmount||0), 0);
+  const totalRentPaid    = rentReceipts.reduce((s,r) => s+(r.amountPaid||r.totalAmount||0), 0);
+  const totalAdvancePaid = advanceReceipts.reduce((s,r) => s+(r.amountPaid||r.totalAmount||0), 0);
+  const totalFinalPaid   = finalReceipts.reduce((s,r) => s+(r.amountPaid||r.totalAmount||0), 0);
   const totalElectricBill= roomElectric.reduce((s,r) => s+(r.totalAmount||0), 0);
-  const totalOtherPaid   = otherReceipts.reduce((s,r) => s+(r.totalAmount||0), 0);
-  const grandTotal       = totalRentPaid + totalAdvancePaid + totalElectricBill + totalOtherPaid;
+  const totalOtherPaid   = otherReceipts.reduce((s,r) => s+(r.amountPaid||r.totalAmount||0), 0);
+  const grandTotal       = totalRentPaid + totalAdvancePaid + totalFinalPaid + totalElectricBill + totalOtherPaid;
 
   // From room config (fixed values set in Rooms section)
   const fixedRent        = roomConfig?.rent    || 0;
   const fixedAdvance     = roomConfig?.advance || 0;
-  // Rent due = fixed rent × months occupied (approx from receipts count) minus paid
-  const rentDue          = Math.max(0, fixedRent - totalRentPaid);
+
+  // Months occupied: from earliest member's roomJoinDate (or first receipt date) to today
+  const joinDate = roomMembers.reduce((earliest, m) => {
+    if (!m.roomJoinDate) return earliest;
+    const d = new Date(m.roomJoinDate);
+    return !earliest || d < earliest ? d : earliest;
+  }, null) || (roomReceipts[0] ? new Date(roomReceipts[0].receiptDate) : null);
+
+  const monthsOccupied = joinDate ? (() => {
+    const now = new Date();
+    return Math.max(1, (now.getFullYear() - joinDate.getFullYear()) * 12 + (now.getMonth() - joinDate.getMonth()) + 1);
+  })() : 1;
+
+  // Total rent expected = fixedRent × months occupied
+  // Rent due = total expected minus all rent + final payments (final bill clears rent)
+  const totalRentExpected  = fixedRent * monthsOccupied;
+  const totalRentCleared   = totalRentPaid + totalFinalPaid; // final receipts also clear rent
+  const rentDue            = Math.max(0, totalRentExpected - totalRentCleared);
+
   // Advance balance = fixed advance minus any advance receipts created
   const advanceBalance   = Math.max(0, fixedAdvance - totalAdvancePaid);
 
@@ -136,9 +155,12 @@ export default function FinalBilling() {
         <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(160px,1fr))',gap:12,marginBottom:16}}>
           {[
             {label:'Fixed Monthly Rent',   value:`₹${fixedRent.toLocaleString('en-IN')}`,     color:'var(--accent)',  icon:'🏷️'},
+            {label:'Months Occupied',      value:`${monthsOccupied} month${monthsOccupied!==1?'s':''}`, color:'var(--info)', icon:'📅'},
+            {label:'Total Rent Expected',  value:`₹${totalRentExpected.toLocaleString('en-IN')}`, color:'var(--text)', icon:'📋'},
+            {label:'Rent Due (All Time)',  value:`₹${rentDue.toLocaleString('en-IN')}`,  color: rentDue>0?'var(--danger)':'var(--success)', icon:'⚖️'},
             {label:'Fixed Advance',        value:`₹${fixedAdvance.toLocaleString('en-IN')}`,   color:'var(--info)',    icon:'💵'},
             {label:'Advance Paid So Far',  value:`₹${totalAdvancePaid.toLocaleString('en-IN')}`,color:'var(--success)',icon:'✅'},
-            {label:'Advance Balance Due',  value:`₹${advanceBalance.toLocaleString('en-IN')}`,  color: advanceBalance>0?'var(--danger)':'var(--success)', icon:'⚖️'},
+            {label:'Advance Balance Due',  value:`₹${advanceBalance.toLocaleString('en-IN')}`,  color: advanceBalance>0?'var(--danger)':'var(--success)', icon:'🔒'},
           ].map((c,i)=>(
             <div key={i} className="card" style={{padding:'12px 14px'}}>
               <div style={{fontSize:'0.68rem',color:'var(--text3)',textTransform:'uppercase',letterSpacing:'0.07em',marginBottom:4}}>{c.icon} {c.label}</div>
@@ -157,7 +179,8 @@ export default function FinalBilling() {
             {[
               {label:'Rent Paid',    value:`₹${totalRentPaid.toLocaleString('en-IN')}`,    color:'var(--success)'},
               {label:'Advance',      value:`₹${totalAdvancePaid.toLocaleString('en-IN')}`, color:'var(--info)'},
-              {label:'Electric',     value:`₹${totalElectricBill.toLocaleString('en-IN')}`,color:'var(--accent)'},
+              {label:'Final Bill',   value:`₹${totalFinalPaid.toLocaleString('en-IN')}`,   color:'var(--accent)'},
+              {label:'Electric',     value:`₹${totalElectricBill.toLocaleString('en-IN')}`,color:'#f39c12'},
               {label:'Grand Total',  value:`₹${grandTotal.toLocaleString('en-IN')}`,       color:'var(--danger)'},
             ].map((c,i)=>(
               <div key={i} className="card">
@@ -187,19 +210,21 @@ export default function FinalBilling() {
                 </div>
 
                 {/* Rent */}
-                {rentReceipts.length > 0 && <BillTable title="Rent Payments" rows={rentReceipts.map(r=>[r.billNumber||'—',fmt(r.receiptDate),fmt(r.fromDate),fmt(r.toDate),r.modeOfPayment,`₹${r.totalAmount}`])} headers={['Bill No.','Date','From','To','Mode','Amount']} total={totalRentPaid} />}
+                {rentReceipts.length > 0 && <BillTable title="Rent Payments" rows={rentReceipts.map(r=>[r.billNumber||'—',fmt(r.receiptDate),fmt(r.fromDate),fmt(r.toDate),r.modeOfPayment,`₹${(r.amountPaid||r.totalAmount||0).toLocaleString('en-IN')}`])} headers={['Bill No.','Date','From','To','Mode','Amount']} total={totalRentPaid} />}
+                {/* Final Bill */}
+                {finalReceipts.length > 0 && <BillTable title="Final Bill Payments" rows={finalReceipts.map(r=>[r.billNumber||'—',fmt(r.receiptDate),fmt(r.fromDate),fmt(r.toDate),r.modeOfPayment,`₹${(r.amountPaid||r.totalAmount||0).toLocaleString('en-IN')}`])} headers={['Bill No.','Date','From','To','Mode','Amount']} total={totalFinalPaid} />}
                 {/* Advance */}
-                {advanceReceipts.length > 0 && <BillTable title="Advance Payments" rows={advanceReceipts.map(r=>[r.billNumber||'—',fmt(r.receiptDate),r.modeOfPayment,`₹${r.totalAmount}`])} headers={['Bill No.','Date','Mode','Amount']} total={totalAdvancePaid} />}
+                {advanceReceipts.length > 0 && <BillTable title="Advance Payments" rows={advanceReceipts.map(r=>[r.billNumber||'—',fmt(r.receiptDate),r.modeOfPayment,`₹${(r.amountPaid||r.totalAmount||0).toLocaleString('en-IN')}`])} headers={['Bill No.','Date','Mode','Amount']} total={totalAdvancePaid} />}
                 {/* Electric */}
                 {roomElectric.length > 0 && <BillTable title="Electric Bills" rows={roomElectric.map(r=>[MONTHS[(r.month||1)-1],r.year,r.unitsConsumed,`₹${r.ratePerUnit}/unit`,`₹${r.totalAmount}`])} headers={['Month','Year','Units','Rate','Amount']} total={totalElectricBill} />}
                 {/* Other */}
-                {otherReceipts.length > 0 && <BillTable title="Other Payments" rows={otherReceipts.map(r=>[r.billNumber||'—',fmt(r.receiptDate),(r.packageName||'other'),`₹${r.totalAmount}`])} headers={['Bill No.','Date','Type','Amount']} total={totalOtherPaid} />}
+                {otherReceipts.length > 0 && <BillTable title="Other Payments" rows={otherReceipts.map(r=>[r.billNumber||'—',fmt(r.receiptDate),(r.packageName||'other'),`₹${(r.amountPaid||r.totalAmount||0).toLocaleString('en-IN')}`])} headers={['Bill No.','Date','Type','Amount']} total={totalOtherPaid} />}
 
                 {/* Grand Total */}
                 <div style={{display:'flex',justifyContent:'flex-end',marginTop:16}}>
                   <table style={{width:'280px',borderCollapse:'collapse',fontSize:'13px'}}>
                     <tbody>
-                      {[['Total Rent',`₹${totalRentPaid}`],['Total Advance',`₹${totalAdvancePaid}`],['Total Electric',`₹${totalElectricBill}`],['Other',`₹${totalOtherPaid}`]].map(([l,v],i)=>(
+                      {[['Total Rent',`₹${totalRentPaid.toLocaleString('en-IN')}`],['Final Bill',`₹${totalFinalPaid.toLocaleString('en-IN')}`],['Total Advance',`₹${totalAdvancePaid.toLocaleString('en-IN')}`],['Total Electric',`₹${totalElectricBill.toLocaleString('en-IN')}`],['Other',`₹${totalOtherPaid.toLocaleString('en-IN')}`]].map(([l,v],i)=>(
                         <tr key={i}><td style={{padding:'5px 10px',color:'#555'}}>{l}</td><td style={{padding:'5px 10px',textAlign:'right',fontWeight:500}}>{v}</td></tr>
                       ))}
                       <tr style={{background:'#111',color:'white',fontWeight:700,fontSize:'14px'}}>

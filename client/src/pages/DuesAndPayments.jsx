@@ -118,15 +118,18 @@ export default function DuesAndPayments() {
         new Date(rec.receiptDate).getFullYear() === curYr
       );
 
-      // Rent paid = sum of ALL receipt types this month EXCEPT electric
-      // (rent, final, other, advance all count toward clearing the rent due)
+      // Rent paid = sum of ALL receipt types this month EXCEPT electric.
+      // Use amountPaid (not totalAmount) so part-payments are counted correctly.
+      // rent, advance, final, other all count toward clearing the month's rent due.
       const rentPaidThisMonth = roomReceiptsThisMonth
-        .filter(rec =>
-          rec.packageName !== 'electric' && rec.paymentType !== 'electric'
-        )
-        .reduce((s, rec) => s + (rec.amountPaid || rec.totalAmount || 0), 0);
+        .filter(rec => {
+          const type = rec.packageName || rec.paymentType || '';
+          return type !== 'electric';
+        })
+        .reduce((s, rec) => s + (rec.amountPaid ?? rec.totalAmount ?? 0), 0);
 
-      // Due = fixed rent minus whatever has been paid. If paid >= fixedRent, due = 0
+      // Due = fixed rent minus whatever has been paid. If paid >= fixedRent, due = 0.
+      // If advance was paid this month and exceeds rent, credit shows as 0 due (no negative).
       const rentDue = Math.max(0, fixedRent - rentPaidThisMonth);
 
       // Electric: current month's reading
@@ -141,7 +144,7 @@ export default function DuesAndPayments() {
           new Date(rec.receiptDate).getMonth() + 1 === curMon &&
           new Date(rec.receiptDate).getFullYear() === curYr
         )
-        .reduce((s, rec) => s + (rec.amountPaid || rec.totalAmount || 0), 0);
+        .reduce((s, rec) => s + (rec.amountPaid ?? rec.totalAmount ?? 0), 0);
       const elecDue = Math.max(0, elecTotal - elecPaid);
 
       return {

@@ -78,8 +78,6 @@ export default function DuesAndPayments() {
   // ── Expiring soon — user-selectable date range (default: today → +7 days) ─
   const [expireFrom, setExpireFrom] = useState('');
   const [expireTo,   setExpireTo]   = useState('');
-  const [bulkDueFrom, setBulkDueFrom] = useState(''); // F3: date filter for bulk WA
-  const [bulkDueTo,   setBulkDueTo]   = useState('');
   const expireFromDate = expireFrom ? new Date(expireFrom) : (() => { const d = new Date(today); d.setHours(0,0,0,0); return d; })();
   const expireToDate   = expireTo   ? new Date(expireTo)   : (() => { const d = new Date(today); d.setDate(d.getDate()+7); return d; })();
   const expiringSoon = members.filter(m =>
@@ -163,6 +161,36 @@ export default function DuesAndPayments() {
   const totalElecDue  = roomDues.reduce((s, r) => s + r.elecDue, 0);
   const totalDueAll   = totalRentDue + totalElecDue;
 
+  // ── dueDateRooms: strictly rooms with dues as of TODAY ───────────────────
+  // Only rooms where totalDue > 0. Grouped by room with primary + others.
+  // daysDue = days since the start of current billing month (1st of curMon).
+  const dueDateRooms = (() => {
+    const billingStart = new Date(curYr, curMon - 1, 1); // 1st of this month
+    const daysDue = Math.floor((today - billingStart) / (1000 * 60 * 60 * 24));
+
+    return roomDues
+      .filter(r => r.totalDue > 0)
+      .map(r => {
+        // Part-payment balance due for this room
+        const partDue = receipts
+          .filter(rec => rec.roomNumber === r.roomNumber && rec.isPartPayment && (rec.balanceDue || 0) > 0)
+          .reduce((s, rec) => s + (rec.balanceDue || 0), 0);
+
+        const allMembers = r.members || [];
+        const [primary, ...others] = allMembers.length > 0 ? allMembers : [{ name: 'Unknown', mobileNo: '' }];
+        return {
+          ...r,
+          partDue,
+          totalDue: r.rentDue + r.elecDue + partDue,
+          daysDue: Math.max(1, daysDue),
+          primary,
+          others,
+          memberNames: allMembers.map(m => m.name).join(', '),
+        };
+      })
+      .sort((a, b) => b.totalDue - a.totalDue);
+  })();
+
   const sq = search.toLowerCase();
   const filterM  = (list) => !search ? list : list.filter(m =>
     (m.name||'').toLowerCase().includes(sq) ||
@@ -180,10 +208,6 @@ export default function DuesAndPayments() {
     (r.memberMobile||'').includes(sq)
   );
 
-  // ── Room dues date range filter state ────────────────────────────────────
-  const [duesFrom, setDuesFrom] = useState('');
-  const [duesTo,   setDuesTo]   = useState('');
-
   // Group expiringSoon by room — show only first member per room, rest as dropdown
   const expiringSoonByRoom = (() => {
     const byRoom = {};
@@ -193,28 +217,6 @@ export default function DuesAndPayments() {
       else byRoom[rn].others.push(m);
     });
     return Object.values(byRoom);
-  })();
-
-  // Room dues filtered by date range (receipts paid before duesTo, not yet after duesFrom)
-  const filteredRoomDues = (() => {
-    if (!duesFrom && !duesTo) return roomDues;
-    const from = duesFrom ? new Date(duesFrom) : null;
-    const to   = duesTo   ? new Date(duesTo)   : null;
-    return roomDues.map(r => {
-      // Re-calculate rent paid within the selected date range
-      const rentPaidInRange = receipts
-        .filter(rec =>
-          rec.roomNumber === r.roomNumber &&
-          (rec.packageName === 'rent' || rec.paymentType === 'rent') &&
-          rec.receiptDate &&
-          (!from || new Date(rec.receiptDate) >= from) &&
-          (!to   || new Date(rec.receiptDate) <= to)
-        )
-        .reduce((s, rec) => s + (rec.amountPaid || rec.totalAmount || 0), 0);
-      const rentDueInRange = Math.max(0, r.fixedRent - rentPaidInRange);
-      const totalDueInRange = rentDueInRange + r.elecDue;
-      return { ...r, rentPaidThisMonth: rentPaidInRange, rentDue: rentDueInRange, totalDue: totalDueInRange };
-    }).filter(r => r.totalDue > 0 || r.fixedRent > 0);
   })();
 
   if (loading) return <div style={{ color:'var(--text2)', padding:40, textAlign:'center' }}>⏳ Loading dues...</div>;
@@ -263,230 +265,163 @@ export default function DuesAndPayments() {
       {/* ── ROOM DUES TAB ─────────────────────────────────────────────────── */}
       {tab === 'dues' && (
         <div>
-          <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',flexWrap:'wrap',gap:10,marginBottom:12,padding:'10px 14px',background:'rgba(231,76,60,0.06)',borderRadius:6,fontSize:'0.83rem',color:'var(--text2)'}}>
-            <span>💡 Shows dues for <strong>{MONTHS[curMon-1]} {curYr}</strong>. Use date filter to narrow by payment date range.</span>
-
-            {/* Fix 3: Date filter for room dues */}
-            <div style={{display:'flex',gap:8,alignItems:'center',flexWrap:'wrap'}}>
-              <span style={{fontSize:'0.75rem',color:'var(--text3)'}}>Payments from:</span>
-              <input type="date" value={duesFrom} onChange={e=>setDuesFrom(e.target.value)}
-                style={{background:'var(--bg3)',border:'1px solid var(--border2)',borderRadius:5,padding:'4px 7px',color:'var(--text)',fontSize:'0.78rem',outline:'none'}} />
-              <span style={{fontSize:'0.75rem',color:'var(--text3)'}}>to:</span>
-              <input type="date" value={duesTo} onChange={e=>setDuesTo(e.target.value)}
-                style={{background:'var(--bg3)',border:'1px solid var(--border2)',borderRadius:5,padding:'4px 7px',color:'var(--text)',fontSize:'0.78rem',outline:'none'}} />
-              {(duesFrom||duesTo) && <button className="btn btn-xs btn-secondary" onClick={()=>{setDuesFrom('');setDuesTo('');}}>✕ Reset</button>}
-            </div>
-
-            <button className="btn btn-secondary btn-xs" onClick={() => {
-              const rows = filterR(filteredRoomDues).map(r => `
-                <tr>
-                  <td><strong>Room ${r.roomNumber}</strong></td>
-                  <td>${r.memberNames||'—'}</td>
-                  <td>${r.memberCount}</td>
-                  <td>₹${(r.fixedRent||0).toLocaleString('en-IN')}</td>
-                  <td class="green">₹${(r.rentPaidThisMonth||0).toLocaleString('en-IN')}</td>
-                  <td class="${r.rentDue>0?'red':''}">₹${(r.rentDue||0).toLocaleString('en-IN')}</td>
-                  <td>₹${(r.elecTotal||0).toLocaleString('en-IN')}</td>
-                  <td class="${r.elecDue>0?'gold':''}">₹${(r.elecDue||0).toLocaleString('en-IN')}</td>
-                  <td class="${r.totalDue>0?'red':'green'}"><strong>₹${(r.totalDue||0).toLocaleString('en-IN')}</strong></td>
-                </tr>`).join('');
-              const totalRD = filteredRoomDues.reduce((s,r)=>s+r.rentDue,0);
-              const totalED = filteredRoomDues.reduce((s,r)=>s+r.elecDue,0);
-              doPrint(`Room Dues — ${MONTHS[curMon-1]} ${curYr}${duesFrom||duesTo?' (filtered)':''}`, `
-                <h2>Room Dues — ${MONTHS[curMon-1]} ${curYr}</h2>
-                <p>Total Rent Due: ₹${totalRD.toLocaleString('en-IN')} &nbsp;|&nbsp; Total Electric Due: ₹${totalED.toLocaleString('en-IN')} &nbsp;|&nbsp; Grand Total: ₹${(totalRD+totalED).toLocaleString('en-IN')}</p>
-                <table><thead><tr><th>Room</th><th>Members</th><th>Count</th><th>Fixed Rent</th><th>Paid</th><th>Rent Due</th><th>Elec Bill</th><th>Elec Due</th><th>Total Due</th></tr></thead>
-                <tbody>${rows}</tbody></table>`);
-            }}>🖨 Print Dues List</button>
-
-            {/* F3: Bulk WhatsApp — date filter + one window per member */}
-            <div style={{display:'flex',gap:8,alignItems:'center',flexWrap:'wrap',marginTop:4,padding:'10px 12px',background:'rgba(37,211,102,0.05)',border:'1px solid rgba(37,211,102,0.2)',borderRadius:8}}>
-              <span style={{fontSize:'0.78rem',color:'var(--text3)',fontWeight:600,whiteSpace:'nowrap'}}>📱 Bulk WhatsApp — due since:</span>
-              <div style={{display:'flex',alignItems:'center',gap:4}}>
-                <label style={{fontSize:'0.72rem',color:'var(--text3)'}}>From</label>
-                <input type="date" value={bulkDueFrom} onChange={e=>setBulkDueFrom(e.target.value)}
-                  style={{background:'var(--bg3)',border:'1px solid var(--border2)',borderRadius:5,padding:'4px 7px',color:'var(--text)',fontSize:'0.78rem',outline:'none'}} />
-              </div>
-              <div style={{display:'flex',alignItems:'center',gap:4}}>
-                <label style={{fontSize:'0.72rem',color:'var(--text3)'}}>To</label>
-                <input type="date" value={bulkDueTo} onChange={e=>setBulkDueTo(e.target.value)}
-                  style={{background:'var(--bg3)',border:'1px solid var(--border2)',borderRadius:5,padding:'4px 7px',color:'var(--text)',fontSize:'0.78rem',outline:'none'}} />
-              </div>
-              {(bulkDueFrom||bulkDueTo) && (
-                <button className="btn btn-xs btn-secondary" onClick={()=>{setBulkDueFrom('');setBulkDueTo('');}}>✕</button>
-              )}
-              <button
-                style={{background:'#25d366',color:'white',border:'none',fontWeight:700,cursor:'pointer',borderRadius:6,padding:'6px 12px',fontSize:'0.8rem',marginLeft:'auto'}}
-                onClick={() => {
-                  // Build list of all individual members with dues
-                  const allDueMembers = [];
-                  filterR(filteredRoomDues).forEach(r => {
-                    if (r.totalDue <= 0) return;
-                    // Apply date filter on roomLeavingDate / joinDate if set
-                    if (bulkDueFrom || bulkDueTo) {
-                      const membersList = members.filter(m => m.roomNumber === r.roomNumber && m.isActive !== false);
-                      const filtered = membersList.filter(m => {
-                        const joinDate = m.roomJoinDate ? new Date(m.roomJoinDate) : null;
-                        if (bulkDueFrom && joinDate && joinDate < new Date(bulkDueFrom)) return false;
-                        if (bulkDueTo   && joinDate && joinDate > new Date(bulkDueTo))   return false;
-                        return true;
-                      });
-                      filtered.forEach(m => {
-                        if (m.mobileNo) allDueMembers.push({ member: m, room: r });
-                      });
-                    } else {
-                      // No date filter — include all members of due rooms
-                      (r.members || []).forEach(m => {
-                        if (m.mobileNo) allDueMembers.push({ member: m, room: r });
-                      });
-                    }
-                  });
-
-                  if (allDueMembers.length === 0) {
-                    alert('No members with dues found for the selected criteria.');
-                    return;
-                  }
-                  if (!window.confirm(`Send WhatsApp reminder to ${allDueMembers.length} member(s) across ${new Set(allDueMembers.map(x=>x.room.roomNumber)).size} room(s)?`)) return;
-
-                  // Open one WhatsApp window per member with 1.5s gap
-                  allDueMembers.forEach(({ member, room }, idx) => {
-                    setTimeout(() => {
-                      const daysDue = room.rentDue > 0
-                        ? Math.floor((new Date() - new Date(new Date().getFullYear(), curMon-1, 1)) / (1000*60*60*24))
-                        : 0;
-                      const msg = [
-                        `🏠 *Hostel Rent Reminder*`,
-                        `━━━━━━━━━━━━━━━━`,
-                        `📅 Month: ${MONTHS[curMon-1]} ${curYr}`,
-                        ``,
-                        `Dear *${member.name}*,`,
-                        `🚪 Room No: *${room.roomNumber}*`,
-                        ``,
-                        room.rentDue > 0 ? `🏠 Rent Due: *₹${room.rentDue.toLocaleString('en-IN')}*` : '',
-                        room.elecDue > 0 ? `⚡ Electric Due: *₹${room.elecDue.toLocaleString('en-IN')}*` : '',
-                        ``,
-                        `💰 *Total Pending: ₹${room.totalDue.toLocaleString('en-IN')}*`,
-                        daysDue > 0 ? `⏱ Due since: *${daysDue} day${daysDue!==1?'s':''} ago*` : '',
-                        ``,
-                        `Please clear dues at earliest.`,
-                        `Late payment fine: ₹50/day.`,
-                        ``,
-                        `Thank you 🙏`,
-                      ].filter(Boolean).join('\n');
-                      const num = `91${String(member.mobileNo).replace(/\D/g,'').slice(-10)}`;
-                      window.open(`https://wa.me/${num}?text=${encodeURIComponent(msg)}`, '_blank');
-                    }, idx * 1500);
-                  });
-                  toast(`Opening WhatsApp for ${allDueMembers.length} member(s)...`);
-                }}>
-                📱 Send to All Due ({filterR(filteredRoomDues).filter(r=>r.totalDue>0).reduce((s,r)=>{
-                  const mCount = (r.members||[]).filter(m=>m.mobileNo).length;
-                  return s + (mCount || 1);
-                }, 0)} members)
-              </button>
-            </div>
-          </div>
-
-          {/* Summary row */}
-          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:10,marginBottom:14}}>
+          {/* Summary bar */}
+          <div style={{display:'flex',gap:12,marginBottom:14,flexWrap:'wrap'}}>
             {[
-              {label:`Rent Due — ${MONTHS[curMon-1]} ${curYr}`, value:fmtM(totalRentDue), color:'var(--danger)'},
-              {label:`Electric Due — ${MONTHS[curMon-1]} ${curYr}`, value:fmtM(totalElecDue), color:'var(--accent)'},
-              {label:'Grand Total Due', value:fmtM(totalDueAll), color:'var(--danger)'},
+              {label:'Total Rent Due',     value:fmtM(totalRentDue),  color:'var(--danger)'},
+              {label:'Total Electric Due', value:fmtM(totalElecDue),  color:'#f39c12'},
+              {label:'Grand Total Due',    value:fmtM(totalDueAll),   color:'var(--danger)',bold:true},
+              {label:'Rooms with Dues',    value:dueDateRooms.length, color:'var(--text)'},
             ].map((s,i)=>(
-              <div key={i} className="card" style={{textAlign:'center',padding:'10px'}}>
-                <div style={{fontSize:'0.7rem',color:'var(--text3)',marginBottom:4}}>{s.label}</div>
-                <div style={{fontFamily:'Rajdhani',fontSize:'1.3rem',fontWeight:700,color:s.color}}>{s.value}</div>
+              <div key={i} className="card" style={{padding:'12px 16px',flex:'1 1 140px',minWidth:0}}>
+                <div style={{fontSize:'0.7rem',color:'var(--text3)',textTransform:'uppercase',letterSpacing:'0.07em',marginBottom:4}}>{s.label}</div>
+                <div style={{fontFamily:'Rajdhani',fontWeight:s.bold?800:700,fontSize:'1.3rem',color:s.color}}>{s.value}</div>
               </div>
             ))}
           </div>
 
-          <div className="card">
-            {filterR(filteredRoomDues).length === 0 ? (
-              <div className="empty-state"><div className="empty-icon">✅</div><p>All rooms are paid up for this month!</p></div>
-            ) : (
+          {/* Print button */}
+          <div style={{display:'flex',justifyContent:'flex-end',marginBottom:10}}>
+            <button className="btn btn-secondary btn-xs" onClick={() => {
+              const rows = dueDateRooms.map(g => {
+                const m = g.primary;
+                return `<tr>
+                  <td><strong>Room ${g.roomNumber}</strong></td>
+                  <td>${g.memberNames}</td>
+                  <td class="red">₹${(g.rentDue||0).toLocaleString('en-IN')}</td>
+                  <td class="${g.elecDue>0?'gold':''}">₹${(g.elecDue||0).toLocaleString('en-IN')}</td>
+                  <td class="${g.partDue>0?'purple':''}">₹${(g.partDue||0).toLocaleString('en-IN')}</td>
+                  <td class="red"><strong>₹${(g.totalDue||0).toLocaleString('en-IN')}</strong></td>
+                  <td>${g.daysDue} day${g.daysDue!==1?'s':''}</td>
+                </tr>`;
+              }).join('');
+              doPrint(`Room Dues as of ${today.toLocaleDateString('en-IN')}`, `
+                <h2>Rooms with Outstanding Dues — as of ${today.toLocaleDateString('en-IN')}</h2>
+                <p>Grand Total Due: ₹${totalDueAll.toLocaleString('en-IN')} across ${dueDateRooms.length} rooms</p>
+                <table><thead><tr><th>Room</th><th>Members</th><th>Rent Due</th><th>Electric Due</th><th>Part-Pay Balance</th><th>Total Due</th><th>Days Due</th></tr></thead>
+                <tbody>${rows}</tbody></table>`);
+            }}>🖨 Print Dues List</button>
+          </div>
+
+          {dueDateRooms.length === 0 ? (
+            <div className="empty-state"><div className="empty-icon">✅</div><p>No rooms with outstanding dues</p></div>
+          ) : (
+            <div className="card">
               <div className="table-wrap">
                 <table>
                   <thead>
                     <tr>
-                      <th>Room</th><th>Members</th>
-                      <th style={{color:'var(--danger)'}}>Fixed Rent</th>
-                      <th style={{color:'var(--success)'}}>Rent Paid</th>
-                      <th style={{color:'var(--danger)'}}>Rent Due</th>
-                      <th style={{color:'var(--accent)'}}>Electric Bill</th>
-                      <th style={{color:'var(--success)'}}>Elec Paid</th>
-                      <th style={{color:'var(--accent)'}}>Elec Due</th>
-                      <th style={{fontWeight:700}}>Total Due</th>
-                      <th>Action</th>
+                      <th>Room</th>
+                      <th>Primary Member</th>
+                      <th>Rent Due</th>
+                      <th>Electric Due</th>
+                      <th>Part-Pay Balance</th>
+                      <th>Total Due</th>
+                      <th>Days Due</th>
+                      <th>WhatsApp</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {filterR(filteredRoomDues).map(r => (
-                      <tr key={r.roomNumber} style={{background:r.totalDue>0?'rgba(231,76,60,0.03)':'transparent'}}>
-                        <td><span className="badge badge-blue" style={{fontSize:'0.85rem',fontWeight:700}}>Room {r.roomNumber}</span></td>
-                        <td style={{fontSize:'0.78rem',color:'var(--text2)',maxWidth:120,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}} title={r.memberNames}>
-                          {r.memberNames || '—'}
-                        </td>
-                        <td style={{color:'var(--text)',fontWeight:600}}>{fmtM(r.fixedRent)}</td>
-                        <td style={{color:'var(--success)'}}>{r.rentPaidThisMonth > 0 ? fmtM(r.rentPaidThisMonth) : <span style={{color:'var(--text3)'}}>—</span>}</td>
-                        <td>
-                          {r.rentDue > 0
-                            ? <span style={{color:'var(--danger)',fontWeight:700}}>{fmtM(r.rentDue)}</span>
-                            : <span className="badge badge-green" style={{fontSize:'0.7rem'}}>Paid ✓</span>}
-                        </td>
-                        <td style={{color:'var(--text2)'}}>
-                          {r.elecReading
-                            ? <span title={`${r.elecReading.unitsConsumed} units @ ₹${r.elecReading.ratePerUnit}/unit`}>{fmtM(r.elecTotal)}</span>
-                            : <span style={{color:'var(--text3)',fontSize:'0.75rem'}}>No reading</span>}
-                        </td>
-                        <td style={{color:'var(--success)'}}>{r.elecPaid > 0 ? fmtM(r.elecPaid) : <span style={{color:'var(--text3)'}}>—</span>}</td>
-                        <td>
-                          {r.elecDue > 0
-                            ? <span style={{color:'var(--accent)',fontWeight:700}}>{fmtM(r.elecDue)}</span>
-                            : r.elecTotal > 0
-                              ? <span className="badge badge-green" style={{fontSize:'0.7rem'}}>Paid ✓</span>
-                              : <span style={{color:'var(--text3)',fontSize:'0.75rem'}}>—</span>}
-                        </td>
-                        <td>
-                          <span style={{background:r.totalDue>0?'rgba(231,76,60,0.12)':'rgba(46,204,113,0.12)',color:r.totalDue>0?'var(--danger)':'var(--success)',padding:'3px 10px',borderRadius:10,fontWeight:700,fontSize:'0.85rem'}}>
-                            {r.totalDue > 0 ? fmtM(r.totalDue) : 'Paid ✓'}
-                          </span>
-                        </td>
-                        <td>
-                          {r.mobileNo && r.totalDue > 0 && (
-                            <button style={{background:'#25d366',color:'white',border:'none',borderRadius:5,padding:'5px 10px',cursor:'pointer',fontSize:'0.72rem',fontWeight:700,whiteSpace:'nowrap'}}
-                              onClick={() => wa.sendCustom(r.mobileNo,
-                                `🏠 *HOSTEL DUES — ${MONTHS[curMon-1]} ${curYr}*\n\n🚪 Room ${r.roomNumber}\n👥 ${r.memberNames}\n\n` +
-                                (r.rentDue > 0 ? `🏷️ Rent Due: *₹${r.rentDue.toLocaleString('en-IN')}*\n` : '') +
-                                (r.elecDue > 0 ? `⚡ Electric Due: *₹${r.elecDue.toLocaleString('en-IN')}*\n` : '') +
-                                `\n💰 *Total Due: ₹${r.totalDue.toLocaleString('en-IN')}*\n\nKindly pay by 5th of the month.\nLate fee: ₹50/day\n\nThank you 🙏`
-                              )}>
-                              📱 WhatsApp
-                            </button>
-                          )}
-                        </td>
-                      </tr>
+                    {filterR(dueDateRooms).map(g => (
+                      <React.Fragment key={g.roomNumber}>
+                        {/* Primary row */}
+                        <tr style={{borderBottom: g.others.length>0 ? 'none':'1px solid var(--border)'}}>
+                          <td>
+                            <span className="badge badge-blue">Room {g.roomNumber}</span>
+                            {g.others.length>0 && (
+                              <span style={{marginLeft:5,fontSize:'0.68rem',color:'var(--text3)'}}>+{g.others.length} more</span>
+                            )}
+                          </td>
+                          <td style={{fontWeight:600,color:'var(--text)'}}>{g.primary.name}</td>
+                          <td style={{color:g.rentDue>0?'var(--danger)':'var(--text3)',fontWeight:g.rentDue>0?700:400}}>
+                            {g.rentDue>0 ? fmtM(g.rentDue) : '—'}
+                          </td>
+                          <td style={{color:g.elecDue>0?'#f39c12':'var(--text3)',fontWeight:g.elecDue>0?700:400}}>
+                            {g.elecDue>0 ? fmtM(g.elecDue) : '—'}
+                          </td>
+                          <td style={{color:g.partDue>0?'var(--purple)':'var(--text3)',fontWeight:g.partDue>0?700:400}}>
+                            {g.partDue>0 ? fmtM(g.partDue) : '—'}
+                          </td>
+                          <td style={{color:'var(--danger)',fontWeight:800,fontFamily:'Rajdhani',fontSize:'1rem'}}>
+                            {fmtM(g.totalDue)}
+                          </td>
+                          <td>
+                            <span style={{
+                              background: g.daysDue>30?'rgba(231,76,60,0.12)':g.daysDue>15?'rgba(243,156,18,0.12)':'rgba(46,204,113,0.08)',
+                              color:      g.daysDue>30?'var(--danger)':g.daysDue>15?'#f39c12':'var(--success)',
+                              padding:'2px 8px',borderRadius:10,fontWeight:700,fontSize:'0.78rem'
+                            }}>
+                              {g.daysDue} day{g.daysDue!==1?'s':''}
+                            </span>
+                          </td>
+                          <td>
+                            {g.primary.mobileNo && (
+                              <button style={{background:'#25d366',color:'white',border:'none',borderRadius:5,padding:'4px 9px',cursor:'pointer',fontSize:'0.72rem',fontWeight:700}}
+                                onClick={() => {
+                                  const msg = [
+                                    `🏠 *Hostel Due Payment Reminder*`,
+                                    `━━━━━━━━━━━━━━━━`,
+                                    `Dear *${g.primary.name}*,`,
+                                    `🚪 Room No: *${g.roomNumber}*`,
+                                    ``,
+                                    g.rentDue>0 ? `🏠 Rent Due: *₹${g.rentDue.toLocaleString('en-IN')}*` : '',
+                                    g.elecDue>0 ? `⚡ Electric Due: *₹${g.elecDue.toLocaleString('en-IN')}*` : '',
+                                    g.partDue>0 ? `📌 Part-Pay Balance: *₹${g.partDue.toLocaleString('en-IN')}*` : '',
+                                    ``,
+                                    `💰 *Total Due: ₹${g.totalDue.toLocaleString('en-IN')}*`,
+                                    `⏱ Due since: *${g.daysDue} day${g.daysDue!==1?'s':''}*`,
+                                    ``,
+                                    `Please clear dues at earliest.`,
+                                    `Late payment fine: ₹50/day.`,
+                                    ``,
+                                    `Thank you 🙏`,
+                                  ].filter(Boolean).join('\n');
+                                  window.open(`https://wa.me/91${String(g.primary.mobileNo).replace(/\D/g,'').slice(-10)}?text=${encodeURIComponent(msg)}`,'_blank');
+                                }}>
+                                📱
+                              </button>
+                            )}
+                          </td>
+                        </tr>
+                        {/* Sub-rows for other members in same room */}
+                        {g.others.map((om,oi) => (
+                          <tr key={om._id} style={{background:'var(--bg3)',opacity:0.85,borderBottom:oi===g.others.length-1?'1px solid var(--border)':'none'}}>
+                            <td style={{paddingLeft:24,color:'var(--text3)',fontSize:'0.75rem'}}>↳ same room</td>
+                            <td style={{color:'var(--text2)',fontSize:'0.83rem'}}>{om.name}</td>
+                            <td colSpan={5} style={{color:'var(--text3)',fontSize:'0.75rem'}}>same dues as above</td>
+                            <td>
+                              {om.mobileNo && (
+                                <button style={{background:'#25d366',color:'white',border:'none',borderRadius:5,padding:'3px 7px',cursor:'pointer',fontSize:'0.7rem',fontWeight:700}}
+                                  onClick={() => {
+                                    const msg = [
+                                      `🏠 *Hostel Due Payment Reminder*`,
+                                      `Dear *${om.name}*,`,
+                                      `🚪 Room No: *${g.roomNumber}*`,
+                                      g.rentDue>0 ? `🏠 Rent Due: *₹${g.rentDue.toLocaleString('en-IN')}*` : '',
+                                      g.elecDue>0 ? `⚡ Electric Due: *₹${g.elecDue.toLocaleString('en-IN')}*` : '',
+                                      g.partDue>0 ? `📌 Part-Pay Balance: *₹${g.partDue.toLocaleString('en-IN')}*` : '',
+                                      `💰 *Total Due: ₹${g.totalDue.toLocaleString('en-IN')}*`,
+                                      `⏱ Due since: *${g.daysDue} day${g.daysDue!==1?'s':''}*`,
+                                      ``,`Please clear dues. Late payment fine: ₹50/day. Thank you 🙏`,
+                                    ].filter(Boolean).join('\n');
+                                    window.open(`https://wa.me/91${String(om.mobileNo).replace(/\D/g,'').slice(-10)}?text=${encodeURIComponent(msg)}`,'_blank');
+                                  }}>
+                                  📱
+                                </button>
+                              )}
+                            </td>
+                          </tr>
+                        ))}
+                      </React.Fragment>
                     ))}
                   </tbody>
-                  <tfoot>
-                    <tr style={{background:'var(--bg3)',fontWeight:700}}>
-                      <td colSpan={2} style={{padding:'8px 14px',color:'var(--text)'}}>TOTAL ({filterR(filteredRoomDues).length} rooms)</td>
-                      <td style={{padding:'8px 14px',color:'var(--text)'}}>{fmtM(filterR(filteredRoomDues).reduce((s,r)=>s+r.fixedRent,0))}</td>
-                      <td style={{padding:'8px 14px',color:'var(--success)'}}>{fmtM(filterR(filteredRoomDues).reduce((s,r)=>s+r.rentPaidThisMonth,0))}</td>
-                      <td style={{padding:'8px 14px',color:'var(--danger)'}}>{fmtM(filterR(filteredRoomDues).reduce((s,r)=>s+r.rentDue,0))}</td>
-                      <td style={{padding:'8px 14px'}}>{fmtM(filterR(filteredRoomDues).reduce((s,r)=>s+r.elecTotal,0))}</td>
-                      <td style={{padding:'8px 14px',color:'var(--success)'}}>{fmtM(filterR(filteredRoomDues).reduce((s,r)=>s+r.elecPaid,0))}</td>
-                      <td style={{padding:'8px 14px',color:'var(--accent)'}}>{fmtM(filterR(filteredRoomDues).reduce((s,r)=>s+r.elecDue,0))}</td>
-                      <td style={{padding:'8px 14px',color:'var(--danger)',fontWeight:700}}>{fmtM(filterR(filteredRoomDues).reduce((s,r)=>s+r.totalDue,0))}</td>
-                      <td></td>
-                    </tr>
-                  </tfoot>
                 </table>
               </div>
-            )}
-          </div>
+            </div>
+          )}
         </div>
       )}
+
 
       {/* ── PART PAYMENTS TAB ─────────────────────────────────────────────── */}
       {tab === 'partpay' && (

@@ -325,13 +325,12 @@ export default function DuesAndPayments() {
                   <td class="${g.elecDue>0?'gold':''}">₹${(g.elecDue||0).toLocaleString('en-IN')}</td>
                   <td class="${g.partDue>0?'purple':''}">₹${(g.partDue||0).toLocaleString('en-IN')}</td>
                   <td class="red"><strong>₹${(g.totalDue||0).toLocaleString('en-IN')}</strong></td>
-                  <td>${g.daysDue} day${g.daysDue!==1?'s':''}</td>
                 </tr>`;
               }).join('');
               doPrint(`Room Dues as of ${today.toLocaleDateString('en-IN')}`, `
                 <h2>Rooms with Outstanding Dues — as of ${today.toLocaleDateString('en-IN')}</h2>
                 <p>Grand Total Due: ₹${totalDueAll.toLocaleString('en-IN')} across ${dueDateRooms.length} rooms</p>
-                <table><thead><tr><th>Room</th><th>Members</th><th>Mobile</th><th>Plan Expiry</th><th>Rent Due</th><th>Electric Due</th><th>Part-Pay Balance</th><th>Total Due</th><th>Days Due</th></tr></thead>
+                <table><thead><tr><th>Room</th><th>Members</th><th>Mobile</th><th>Plan Expiry</th><th>Rent Due</th><th>Electric Due</th><th>Part-Pay Balance</th><th>Total Due</th></tr></thead>
                 <tbody>${rows}</tbody></table>`);
             }}>🖨 Print Dues List</button>
           </div>
@@ -350,7 +349,6 @@ export default function DuesAndPayments() {
                       <th>Electric Due</th>
                       <th>Part-Pay Balance</th>
                       <th>Total Due</th>
-                      <th>Days Due</th>
                       <th>WhatsApp</th>
                     </tr>
                   </thead>
@@ -377,15 +375,6 @@ export default function DuesAndPayments() {
                           </td>
                           <td style={{color:'var(--danger)',fontWeight:800,fontFamily:'Rajdhani',fontSize:'1rem'}}>
                             {fmtM(g.totalDue)}
-                          </td>
-                          <td>
-                            <span style={{
-                              background: g.daysDue>30?'rgba(231,76,60,0.12)':g.daysDue>15?'rgba(243,156,18,0.12)':'rgba(46,204,113,0.08)',
-                              color:      g.daysDue>30?'var(--danger)':g.daysDue>15?'#f39c12':'var(--success)',
-                              padding:'2px 8px',borderRadius:10,fontWeight:700,fontSize:'0.78rem'
-                            }}>
-                              {g.daysDue} day{g.daysDue!==1?'s':''}
-                            </span>
                           </td>
                           <td>
                             {g.primary.mobileNo && (

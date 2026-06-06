@@ -137,6 +137,8 @@ exports.create = async (req, res, next) => {
       validate.required(roomNumber, 'Room number'),
       validate.required(totalAmount, 'Amount'),
       validate.number(totalAmount, 'Amount'),
+      validate.positive(totalAmount, 'Amount'),
+      validate.positive(req.body.amountPaid, 'Amount paid'),
     ]);
     if (errors.length) { await session.abortTransaction(); return res.status(400).json({ message: errors[0], errors }); }
     const [saved] = await Receipt.create([{ ...req.body, hostelId }], { session });

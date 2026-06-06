@@ -145,11 +145,14 @@ export default function DuesAndPayments() {
           new Date(rec.receiptDate).getFullYear() === curYr
         )
         .reduce((s, rec) => s + (rec.amountPaid ?? rec.totalAmount ?? 0), 0);
-      // Electric also paid if a 'final' receipt this month includes it in its notes
-      // e.g. notes = "Final Bill: Rent ₹5000 + Electric Jun: ₹800 + Pending ₹200"
+      // Electric also paid if a 'final' receipt this month includes it.
+      // FIX 5: use the dedicated electricAmount field (set since the model update).
+      // Fall back to notes regex for older receipts created before the field existed.
       const elecPaidInFinal = roomReceiptsThisMonth
         .filter(rec => (rec.packageName === 'final' || rec.paymentType === 'final'))
         .reduce((s, rec) => {
+          if (rec.electricAmount && rec.electricAmount > 0) return s + rec.electricAmount;
+          // Legacy fallback: parse notes string for receipts saved before the field existed
           const m = (rec.notes || '').match(/Electric\s+[\w]+:\s*₹([\d,]+)/);
           return s + (m ? parseInt(m[1].replace(/,/g, '')) : 0);
         }, 0);
@@ -345,6 +348,7 @@ export default function DuesAndPayments() {
                     <tr>
                       <th>Room</th>
                       <th>Primary Member</th>
+                      <th>Plan Expiry</th>
                       <th>Rent Due</th>
                       <th>Electric Due</th>
                       <th>Part-Pay Balance</th>
@@ -364,6 +368,18 @@ export default function DuesAndPayments() {
                             )}
                           </td>
                           <td style={{fontWeight:600,color:'var(--text)'}}>{g.primary.name}</td>
+                          <td style={{fontSize:'0.78rem'}}>
+                            {(() => {
+                              const roomMems = members.filter(m => m.roomNumber === g.roomNumber && m.isActive !== false);
+                              const expiries = roomMems.map(m => m.roomLeavingDate).filter(Boolean).map(d => new Date(d));
+                              if (!expiries.length) return <span style={{color:'var(--text3)'}}>—</span>;
+                              const soonest = new Date(Math.min(...expiries));
+                              const diff = Math.ceil((soonest - today) / (1000*60*60*24));
+                              const label = diff < 0 ? `Expired ${Math.abs(diff)}d ago` : diff === 0 ? 'Today' : `${diff}d left`;
+                              const color = diff < 0 ? 'var(--danger)' : diff <= 7 ? '#f39c12' : 'var(--success)';
+                              return <span style={{color,fontWeight:700}}>{label}</span>;
+                            })()}
+                          </td>
                           <td style={{color:g.rentDue>0?'var(--danger)':'var(--text3)',fontWeight:g.rentDue>0?700:400}}>
                             {g.rentDue>0 ? fmtM(g.rentDue) : '—'}
                           </td>

@@ -22,7 +22,7 @@ const EMPTY = {
   receiptNumber:'', billNumber:'', billYear:'', billSerial:'',
   roomNumber:'', memberMode:'all', memberName:'', memberMobile:'', memberId:'',
   packageName:'rent', fromDate:'', toDate:'', billingMonth:'',
-  totalAmount:'', amountPaid:'', balanceDue:'0', isPartPayment:false,
+  totalAmount:'', amountPaid:'', balanceDue:'0', isPartPayment:false, electricAmount:0,
   modeOfPayment:'cash', notes:'',
   receiptDate: new Date().toISOString().split('T')[0],
 };
@@ -179,10 +179,18 @@ export default function Receipts() {
 
         amount = String(fixedRent + electricAmt + pendingBalance);
         notes = `Final Bill: Rent ₹${fixedRent}${electricNote}${pendingBalance > 0 ? ` + Pending ₹${pendingBalance}` : ''}`;
+        // FIX 5: store electricAmount explicitly on form so it's sent to server
+        setForm(p => ({ ...p, packageName: pkg, totalAmount: amount, notes, electricAmount: electricAmt }));
+        return;
       } catch(e) {}
     }
 
-    setForm(p => ({ ...p, packageName: pkg, totalAmount: amount, notes }));
+    // FIX 6: warn when billing month is missing for final package
+    if (pkg === 'final' && form.roomNumber && !billingMonth) {
+      toast('⚠ Select a Billing Month first — electric charges may be missing from the final bill.', 'warning');
+    }
+
+    setForm(p => ({ ...p, packageName: pkg, totalAmount: amount, notes, electricAmount: 0 }));
   };
 
   // ── Part payment recalc ───────────────────────────────────────────────────
@@ -220,13 +228,14 @@ export default function Receipts() {
       ...form,
       memberName, memberMobile, memberId,
       members: members_list,
-      totalAmount:   parseFloat(form.totalAmount) || 0,
+      totalAmount:    parseFloat(form.totalAmount) || 0,
       amountPaid,
       balanceDue,
-      amountInWords: numberToWords(amountPaid) + ' Rupees Only',
-      paymentType:   form.packageName,
-      receiptNumber: parseInt(form.receiptNumber) || 1,
-      billSerial:    parseInt(form.billSerial) || 1,
+      amountInWords:  numberToWords(amountPaid) + ' Rupees Only',
+      paymentType:    form.packageName,
+      receiptNumber:  parseInt(form.receiptNumber) || 1,
+      billSerial:     parseInt(form.billSerial) || 1,
+      electricAmount: parseFloat(form.electricAmount) || 0,
     };
 
     try {

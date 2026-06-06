@@ -49,6 +49,18 @@ router.post('/', async (req, res, next) => {
   try {
     const hostelId = await getHostelId(req);
     if (!hostelId) return res.status(400).json({ message: 'No hostel assigned' });
+
+    const { roomNumber, month, year } = req.body;
+
+    // ── FIX 4: Duplicate guard — one reading per room per month per year ──
+    const existing = await Electric.findOne({ hostelId, roomNumber: parseInt(roomNumber), month: parseInt(month), year: parseInt(year) });
+    if (existing) {
+      return res.status(409).json({
+        message: `A reading for Room ${roomNumber} in ${month}/${year} already exists. Delete the existing entry first if you need to correct it.`,
+        existing,
+      });
+    }
+
     const entry = new Electric({ ...req.body, hostelId });
     const saved = await entry.save();
 

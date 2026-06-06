@@ -34,6 +34,10 @@ const receiptSchema = new mongoose.Schema({
   balanceDue:    { type: Number, default: 0 },  // remaining
   isPartPayment: { type: Boolean, default: false },
 
+  // FIX 5: For final receipts that bundle electric, store the electric portion
+  // explicitly so DuesAndPayments doesn't need to parse the notes string.
+  electricAmount: { type: Number, default: 0 },
+
   amountInWords: { type: String },
   modeOfPayment: { type: String, enum: ['cash','online'], default: 'cash' },
   receiptDate:   { type: Date, default: Date.now },

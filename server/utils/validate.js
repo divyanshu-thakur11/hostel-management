@@ -18,9 +18,12 @@ const aadhar = (val, field = 'Aadhar number') => {
 const number = (val, field) =>
   (val !== undefined && val !== '' && isNaN(Number(val))) ? `${field} must be a number` : null;
 
+const positive = (val, field) =>
+  (val !== undefined && val !== '' && !isNaN(Number(val)) && Number(val) < 0) ? `${field} cannot be negative` : null;
+
 const minLength = (val, field, min) =>
   (val && String(val).length < min) ? `${field} must be at least ${min} characters` : null;
 
 const collect = (rules) => rules.filter(Boolean);
 
-module.exports = { required, mobile, aadhar, number, minLength, collect };
+module.exports = { required, mobile, aadhar, number, positive, minLength, collect };

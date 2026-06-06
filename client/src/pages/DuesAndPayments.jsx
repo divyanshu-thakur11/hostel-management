@@ -108,18 +108,25 @@ export default function DuesAndPayments() {
     .filter(r => r.memberCount > 0)
     .map(r => {
       const rNum = r.roomNumber;
-      // Rent: fixed rent from room config
       const fixedRent = r.rent || 0;
-      // Rent paid this month for this room
-      const rentPaidThisMonth = receipts
+
+      // All receipts for this room this month
+      const roomReceiptsThisMonth = receipts.filter(rec =>
+        rec.roomNumber === rNum &&
+        rec.receiptDate &&
+        new Date(rec.receiptDate).getMonth() + 1 === curMon &&
+        new Date(rec.receiptDate).getFullYear() === curYr
+      );
+
+      // Rent paid = sum of ALL receipt types this month EXCEPT electric
+      // (rent, final, other, advance all count toward clearing the rent due)
+      const rentPaidThisMonth = roomReceiptsThisMonth
         .filter(rec =>
-          rec.roomNumber === rNum &&
-          (rec.packageName === 'rent' || rec.paymentType === 'rent') &&
-          rec.receiptDate &&
-          new Date(rec.receiptDate).getMonth() + 1 === curMon &&
-          new Date(rec.receiptDate).getFullYear() === curYr
+          rec.packageName !== 'electric' && rec.paymentType !== 'electric'
         )
         .reduce((s, rec) => s + (rec.amountPaid || rec.totalAmount || 0), 0);
+
+      // Due = fixed rent minus whatever has been paid. If paid >= fixedRent, due = 0
       const rentDue = Math.max(0, fixedRent - rentPaidThisMonth);
 
       // Electric: current month's reading
@@ -154,7 +161,7 @@ export default function DuesAndPayments() {
         memberNames: (r.members || []).map(m => m.name).join(', '),
       };
     })
-    .filter(r => r.totalDue > 0 || r.fixedRent > 0)
+    .filter(r => r !== null && r.totalDue > 0)
     .sort((a, b) => b.totalDue - a.totalDue);
 
   const totalRentDue  = roomDues.reduce((s, r) => s + r.rentDue, 0);

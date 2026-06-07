@@ -377,7 +377,13 @@ export default function DuesAndPayments() {
                               const diff = Math.ceil((soonest - today) / (1000*60*60*24));
                               const label = diff < 0 ? `Expired ${Math.abs(diff)}d ago` : diff === 0 ? 'Today' : `${diff}d left`;
                               const color = diff < 0 ? 'var(--danger)' : diff <= 7 ? '#f39c12' : 'var(--success)';
-                              return <span style={{color,fontWeight:700}}>{label}</span>;
+                              const dateStr = soonest.toLocaleDateString('en-IN', { day:'numeric', month:'short', year:'numeric' });
+                              return (
+                                <div>
+                                  <span style={{color,fontWeight:700}}>{label}</span>
+                                  <div style={{fontSize:'0.68rem',color:'var(--text3)',marginTop:2}}>{dateStr}</div>
+                                </div>
+                              );
                             })()}
                           </td>
                           <td style={{color:g.rentDue>0?'var(--danger)':'var(--text3)',fontWeight:g.rentDue>0?700:400}}>

@@ -17,19 +17,16 @@ const getHostelId = async (req) => {
   return req.user.hostelId;
 };
 
-// Auto-create room records for all 20 rooms if missing
+// Auto-create default rooms ONLY when the hostel has no rooms at all (first-time setup).
+// Never call this after rooms exist — it would recreate deleted rooms.
 async function ensureRoomsExist(hostelId) {
-  const existing    = await Room.find({ hostelId }).lean();
-  const existingNums = existing.map(r => r.roomNumber);
-  const toCreate    = [];
+  const count = await Room.countDocuments({ hostelId });
+  if (count > 0) return; // rooms already set up — do nothing
+  const toCreate = [];
   for (let i = 1; i <= 20; i++) {
-    if (!existingNums.includes(i)) {
-      toCreate.push({ hostelId, roomNumber: i, rent: 0, advance: 0, maxCapacity: 10 });
-    }
+    toCreate.push({ hostelId, roomNumber: i, rent: 0, advance: 0, maxCapacity: 6 });
   }
-  if (toCreate.length > 0) {
-    await Room.insertMany(toCreate, { ordered: false }).catch(() => {});
-  }
+  await Room.insertMany(toCreate, { ordered: false }).catch(() => {});
 }
 
 // GET all rooms with config + live member data

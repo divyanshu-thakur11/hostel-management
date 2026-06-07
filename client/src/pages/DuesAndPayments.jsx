@@ -306,24 +306,23 @@ export default function DuesAndPayments() {
           <div style={{display:'flex',justifyContent:'flex-end',marginBottom:10}}>
             <button className="btn btn-secondary btn-xs" onClick={() => {
               const rows = dueDateRooms.map(g => {
-                // Get plan expiry from members state for this room
                 const roomMems = members.filter(m => m.roomNumber === g.roomNumber && m.isActive !== false);
                 const mobile = roomMems[0]?.mobileNo || g.mobileNo || '—';
-                // Find the soonest expiry among all members in the room
                 const expiries = roomMems.map(m => m.roomLeavingDate).filter(Boolean).map(d => new Date(d));
-                let expiryStr = '—';
+                let expiryCell = '—';
                 if (expiries.length > 0) {
                   const soonest = new Date(Math.min(...expiries));
                   const diffDays = Math.ceil((soonest - today) / (1000 * 60 * 60 * 24));
-                  if (diffDays < 0)      expiryStr = `Expired ${Math.abs(diffDays)}d ago`;
-                  else if (diffDays === 0) expiryStr = 'Expires today';
-                  else                   expiryStr = `${diffDays}d left`;
+                  const dateStr = soonest.toLocaleDateString('en-IN', { day:'numeric', month:'short', year:'numeric' });
+                  const daysStr = diffDays < 0 ? `Expired ${Math.abs(diffDays)}d ago` : diffDays === 0 ? 'Today' : `${diffDays}d left`;
+                  const cls = diffDays < 0 ? 'red' : diffDays <= 7 ? 'gold' : 'green';
+                  expiryCell = `<span class="${cls}" style="font-weight:700">${dateStr}</span><br><small style="color:#888;font-size:10px">${daysStr}</small>`;
                 }
                 return `<tr>
                   <td><strong>Room ${g.roomNumber}</strong></td>
                   <td>${g.memberNames}</td>
                   <td>${mobile}</td>
-                  <td class="${expiries.length && Math.ceil((new Date(Math.min(...expiries))-today)/(1000*60*60*24)) < 0 ? 'red' : expiries.length && Math.ceil((new Date(Math.min(...expiries))-today)/(1000*60*60*24)) <= 7 ? 'gold' : 'green'}">${expiryStr}</td>
+                  <td>${expiryCell}</td>
                   <td class="red">₹${(g.rentDue||0).toLocaleString('en-IN')}</td>
                   <td class="${g.elecDue>0?'gold':''}">₹${(g.elecDue||0).toLocaleString('en-IN')}</td>
                   <td class="${g.partDue>0?'purple':''}">₹${(g.partDue||0).toLocaleString('en-IN')}</td>
@@ -375,13 +374,13 @@ export default function DuesAndPayments() {
                               if (!expiries.length) return <span style={{color:'var(--text3)'}}>—</span>;
                               const soonest = new Date(Math.min(...expiries));
                               const diff = Math.ceil((soonest - today) / (1000*60*60*24));
-                              const label = diff < 0 ? `Expired ${Math.abs(diff)}d ago` : diff === 0 ? 'Today' : `${diff}d left`;
+                              const daysLabel = diff < 0 ? `Expired ${Math.abs(diff)}d ago` : diff === 0 ? 'Today' : `${diff}d left`;
                               const color = diff < 0 ? 'var(--danger)' : diff <= 7 ? '#f39c12' : 'var(--success)';
                               const dateStr = soonest.toLocaleDateString('en-IN', { day:'numeric', month:'short', year:'numeric' });
                               return (
                                 <div>
-                                  <span style={{color,fontWeight:700}}>{label}</span>
-                                  <div style={{fontSize:'0.68rem',color:'var(--text3)',marginTop:2}}>{dateStr}</div>
+                                  <span style={{color, fontWeight:700}}>{dateStr}</span>
+                                  <div style={{fontSize:'0.68rem', color:'var(--text3)', marginTop:2}}>{daysLabel}</div>
                                 </div>
                               );
                             })()}

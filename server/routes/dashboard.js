@@ -1,5 +1,6 @@
 const express = require('express');
 const router = express.Router();
+const mongoose = require('mongoose');
 const Member = require('../models/Member');
 const Receipt = require('../models/Receipt');
 const Room = require('../models/Room');
@@ -29,13 +30,14 @@ router.get('/', async (req, res, next) => {
     const in7days = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
     const baseQ = hostelId ? { hostelId } : {};
 
-    // ── FIX 2: Revenue via MongoDB aggregation — no 500-receipt cap ───────
-    // Use $cond+$gt instead of $ifNull: amountPaid defaults to 0 (not null),
-    // so $ifNull never substitutes. $cond correctly falls back to totalAmount
-    // when amountPaid is 0 (i.e. not set on older receipts).
+    // Aggregation pipelines require ObjectId — Mongoose find() auto-casts strings
+    // but aggregate() bypasses casting. hostelId from JWT is a plain string.
+    const hostelObjId = hostelId ? new mongoose.Types.ObjectId(hostelId.toString()) : null;
+
+    // ── Revenue via MongoDB aggregation — no 500-receipt cap ─────────────
     const amtExpr = { $cond: [{ $gt: ['$amountPaid', 0] }, '$amountPaid', '$totalAmount'] };
     const revenueAgg = await Receipt.aggregate([
-      { $match: hostelId ? { hostelId } : {} },
+      { $match: hostelObjId ? { hostelId: hostelObjId } : {} },
       { $group: {
         _id: null,
         totalRevenue:    { $sum: amtExpr },
@@ -49,10 +51,12 @@ router.get('/', async (req, res, next) => {
     // 6-month trend via aggregation
     const trendStart = new Date(now.getFullYear(), now.getMonth() - 5, 1);
     const trendAgg = await Receipt.aggregate([
-      { $match: hostelId ? { hostelId, receiptDate: { $gte: trendStart } } : { receiptDate: { $gte: trendStart } } },
+      { $match: hostelObjId
+          ? { hostelId: hostelObjId, receiptDate: { $gte: trendStart } }
+          : { receiptDate: { $gte: trendStart } } },
       { $group: {
         _id: { year: { $year: '$receiptDate' }, month: { $month: '$receiptDate' } },
-        amount: { $sum: { $cond: [{ $gt: ['$amountPaid', 0] }, '$amountPaid', '$totalAmount'] } },
+        amount: { $sum: amtExpr },
       }},
     ]);
     const trendMap = {};

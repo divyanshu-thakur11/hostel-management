@@ -148,4 +148,41 @@ router.put('/', async (req, res, next) => {
   } catch(err) { next(err); }
 });
 
+// POST create a new room
+router.post('/', async (req, res, next) => {
+  try {
+    const hostelId = await getHostelId(req);
+    if (!hostelId) return res.status(400).json({ message: 'No hostel assigned' });
+    const { roomNumber, rent, advance, maxCapacity, notes } = req.body;
+    const num = parseInt(roomNumber);
+    if (!num || num < 1) return res.status(400).json({ message: 'Valid room number required' });
+    const exists = await Room.findOne({ hostelId, roomNumber: num });
+    if (exists) return res.status(409).json({ message: `Room ${num} already exists` });
+    const room = await Room.create({
+      hostelId,
+      roomNumber:  num,
+      rent:        parseFloat(rent)       || 0,
+      advance:     parseFloat(advance)    || 0,
+      maxCapacity: parseInt(maxCapacity)  || 6,
+      notes:       notes || '',
+    });
+    res.status(201).json(room);
+  } catch(err) { next(err); }
+});
+
+// DELETE a room (only if vacant — no active members)
+router.delete('/:roomNumber', async (req, res, next) => {
+  try {
+    const hostelId = await getHostelId(req);
+    if (!hostelId) return res.status(400).json({ message: 'No hostel assigned' });
+    const roomNum = parseInt(req.params.roomNumber);
+    const activeMembers = await Member.countDocuments({ hostelId, roomNumber: roomNum, isActive: true });
+    if (activeMembers > 0) {
+      return res.status(400).json({ message: `Room ${roomNum} has ${activeMembers} active member(s). Move or deactivate them before deleting the room.` });
+    }
+    await Room.findOneAndDelete({ hostelId, roomNumber: roomNum });
+    res.json({ message: `Room ${roomNum} deleted` });
+  } catch(err) { next(err); }
+});
+
 module.exports = router;

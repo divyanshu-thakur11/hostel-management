@@ -18,17 +18,24 @@ api.interceptors.request.use((config) => {
 api.interceptors.response.use(
   (res) => res,
   (err) => {
-    // Safely check status even if err.response doesn't exist (e.g., network error)
+    // Bypass interceptor if the request was deliberately canceled
+    if (axios.isCancel(err)) {
+      return Promise.reject(err);
+    }
+
     const status = err.response?.status;
 
     if (status === 401) {
       localStorage.removeItem('hm_user');
       window.location.href = '/';
     }
-    // 503 = DB not connected — show user-friendly message
+    
+    // 503 = DB not connected — show user-friendly message safely
     if (status === 503) {
-      console.warn('Server DB not ready:', err.response?.data?.message);
+      const dbMessage = err.response?.data?.message || 'Database connection offline';
+      console.warn('Server DB not ready:', dbMessage);
     }
+    
     return Promise.reject(err);
   }
 );
@@ -44,7 +51,7 @@ export const authAPI = {
   toggleUser:      (id)         => api.put(`/auth/users/${id}/toggle`),
   deleteUser:      (id)         => api.delete(`/auth/users/${id}`),
   getUserActivity: (id)         => api.get(`/auth/users/${id}/activity`),
-  resetPassword:   (id, data)   => api.post(`/auth/users/${id}/reset-password`, data), // FIXED: String template literal closure
+  resetPassword:   (id, data)   => api.post(`/auth/users/${id}/reset-password`, data), 
 };
 
 export const dashboardAPI = {
@@ -58,10 +65,12 @@ export const hostelAPI = {
 };
 
 export const roomsAPI = {
-  getAll:    (params)    => api.get('/rooms', { params }),
-  getOne:    (n)         => api.get(`/rooms/${n}`),
-  update:    (n, data)   => api.put(`/rooms/${n}`, data),
-  updateAll: (rooms)     => api.put('/rooms', { rooms }),
+  getAll:     (params)    => api.get('/rooms', { params }),
+  getOne:     (n)         => api.get(`/rooms/${n}`),
+  update:     (n, data)   => api.put(`/rooms/${n}`, data),
+  updateAll:  (rooms)     => api.put('/rooms', { rooms }),
+  create:     (data)      => api.post('/rooms', data),
+  deleteRoom: (n)         => api.delete(`/rooms/${n}`),
 };
 
 export const membersAPI = {
@@ -86,7 +95,7 @@ export const receiptsAPI = {
   resetSerial:    (yearType) => api.post('/receipts/reset-serial', { yearType }),
   create:         (data)   => api.post('/receipts', data),
   delete:         (id)     => api.delete(`/receipts/${id}`),
-  clearDue:       (id)     => api.patch(`/receipts/${id}/clear-due`), // Bug 2 fix
+  clearDue:       (id)     => api.patch(`/receipts/${id}/clear-due`), 
 };
 
 export const electricAPI = {

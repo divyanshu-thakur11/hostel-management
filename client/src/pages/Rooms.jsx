@@ -20,6 +20,7 @@ export default function Rooms() {
   const [bulkMode, setBulkMode]   = useState(false);
   const [historyRoom, setHistoryRoom] = useState(null); // F2: room to show rent history
   const [bulkData, setBulkData]   = useState([]);
+  const [newRoomNumber, setNewRoomNumber] = useState('');
   const toast = useToast();
 
   const load = useCallback(() => {
@@ -67,14 +68,37 @@ export default function Rooms() {
       rent:        r.rent        || 0,
       advance:     r.advance     || 0,
       maxCapacity: r.maxCapacity || 6,
+      isNew:       false,
+      toDelete:    false,
     })));
+    setNewRoomNumber('');
     setBulkMode(true);
   };
 
   const saveBulk = async () => {
     setSaving(true);
     try {
-      await roomsAPI.updateAll(bulkData);
+      // Delete marked rooms first
+      const toDelete = bulkData.filter(r => r.toDelete && !r.isNew);
+      for (const r of toDelete) {
+        try {
+          await roomsAPI.deleteRoom(r.roomNumber);
+        } catch(e) {
+          toast(`Cannot delete Room ${r.roomNumber}: ${e.response?.data?.message || 'has active members'}`, 'error');
+        }
+      }
+      // Create new rooms
+      const toCreate = bulkData.filter(r => r.isNew && !r.toDelete);
+      for (const r of toCreate) {
+        try {
+          await roomsAPI.create({ roomNumber: r.roomNumber, rent: r.rent, advance: r.advance, maxCapacity: r.maxCapacity });
+        } catch(e) {
+          toast(`Cannot add Room ${r.roomNumber}: ${e.response?.data?.message || 'error'}`, 'error');
+        }
+      }
+      // Update existing (not marked for delete, not new)
+      const toUpdate = bulkData.filter(r => !r.toDelete && !r.isNew);
+      if (toUpdate.length) await roomsAPI.updateAll(toUpdate);
       toast('All rooms updated');
       setBulkMode(false);
       load();
@@ -87,6 +111,18 @@ export default function Rooms() {
     setBulkData(prev => prev.map(r =>
       r.roomNumber === roomNumber ? { ...r, [field]: value } : r
     ));
+  };
+
+  const addBulkRow = () => {
+    const num = parseInt(newRoomNumber);
+    if (!num || num < 1) return toast('Enter a valid room number', 'error');
+    if (bulkData.find(r => r.roomNumber === num)) return toast(`Room ${num} already in list`, 'error');
+    setBulkData(prev => [...prev, { roomNumber: num, rent: 0, advance: 0, maxCapacity: 6, isNew: true, toDelete: false }].sort((a,b)=>a.roomNumber-b.roomNumber));
+    setNewRoomNumber('');
+  };
+
+  const toggleDelete = (roomNumber) => {
+    setBulkData(prev => prev.map(r => r.roomNumber === roomNumber ? { ...r, toDelete: !r.toDelete } : r));
   };
 
   // Stats
@@ -341,59 +377,87 @@ export default function Rooms() {
       {/* Bulk Edit Modal */}
       {bulkMode && (
         <div className="modal-overlay" onClick={e => e.target === e.currentTarget && setBulkMode(false)}>
-          <div className="modal" style={{ maxWidth: 700 }}>
+          <div className="modal" style={{ maxWidth: 760 }}>
             <div className="modal-header">
               <h3>Edit All Rooms</h3>
               <button className="close-btn" onClick={() => setBulkMode(false)}>✕</button>
             </div>
             <div className="modal-body">
               <div style={{ background: 'rgba(240,165,0,0.06)', border: '1px solid rgba(240,165,0,0.2)', borderRadius: 8, padding: '10px 14px', marginBottom: 16, fontSize: '0.82rem', color: 'var(--text2)' }}>
-                💡 Set the <strong>fixed monthly rent</strong> for each room. Leave as 0 if not applicable.
+                💡 Edit rent and capacity for any room. <strong>Add</strong> new rooms or <strong>Delete</strong> vacant ones. Rooms with active members cannot be deleted.
               </div>
-              <div style={{ maxHeight: 420, overflowY: 'auto' }}>
+
+              {/* Add Room Row */}
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 14, padding: '10px 12px', background: 'rgba(46,204,113,0.06)', border: '1px solid rgba(46,204,113,0.2)', borderRadius: 8 }}>
+                <span style={{ fontSize: '0.8rem', color: 'var(--success)', fontWeight: 600, whiteSpace: 'nowrap' }}>➕ Add Room</span>
+                <input
+                  type="number" placeholder="Room No." value={newRoomNumber}
+                  onChange={e => setNewRoomNumber(e.target.value)}
+                  onKeyDown={e => e.key === 'Enter' && addBulkRow()}
+                  style={{ width: 90, background: 'var(--bg3)', border: '1px solid var(--border)', borderRadius: 5, padding: '6px 10px', color: 'var(--text)', outline: 'none', fontSize: '0.88rem' }}
+                />
+                <button className="btn btn-secondary btn-xs" onClick={addBulkRow} style={{ color: 'var(--success)', borderColor: 'rgba(46,204,113,0.4)' }}>Add</button>
+                <span style={{ fontSize: '0.74rem', color: 'var(--text3)' }}>Enter a room number not already in your hostel to create it.</span>
+              </div>
+
+              <div style={{ maxHeight: 380, overflowY: 'auto' }}>
                 <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                   <thead>
                     <tr>
-                      {['Room', 'Monthly Rent (₹)', 'Advance (₹)', 'Max Capacity'].map(h => (
+                      {['Room', 'Monthly Rent (₹)', 'Advance (₹)', 'Max Capacity', 'Delete'].map(h => (
                         <th key={h} style={{ padding: '8px 10px', textAlign: 'left', fontSize: '0.72rem', textTransform: 'uppercase', letterSpacing: '0.07em', color: 'var(--text3)', borderBottom: '1px solid var(--border)' }}>{h}</th>
                       ))}
                     </tr>
                   </thead>
                   <tbody>
                     {bulkData.map(r => (
-                      <tr key={r.roomNumber}>
-                        <td style={{ padding: '6px 10px', fontFamily: 'Rajdhani', fontWeight: 700, color: 'var(--accent)', fontSize: '1rem' }}>
+                      <tr key={r.roomNumber} style={{ opacity: r.toDelete ? 0.4 : 1, background: r.isNew ? 'rgba(46,204,113,0.04)' : r.toDelete ? 'rgba(231,76,60,0.04)' : 'transparent' }}>
+                        <td style={{ padding: '6px 10px', fontFamily: 'Rajdhani', fontWeight: 700, color: r.isNew ? 'var(--success)' : r.toDelete ? 'var(--danger)' : 'var(--accent)', fontSize: '1rem', whiteSpace: 'nowrap' }}>
                           {String(r.roomNumber).padStart(2, '0')}
+                          {r.isNew && <span style={{ marginLeft: 5, fontSize: '0.62rem', color: 'var(--success)', fontFamily: 'inherit', fontWeight: 500 }}>NEW</span>}
                         </td>
                         <td style={{ padding: '6px 10px' }}>
-                          <input type="number" value={r.rent}
+                          <input type="number" value={r.rent} disabled={r.toDelete}
                             onChange={e => updateBulkRow(r.roomNumber, 'rent', e.target.value)}
                             style={{ width: '100%', background: 'var(--bg3)', border: '1px solid var(--border)', borderRadius: 5, padding: '6px 10px', color: 'var(--text)', outline: 'none', fontSize: '0.88rem' }}
                             placeholder="0" />
                         </td>
                         <td style={{ padding: '6px 10px' }}>
-                          <input type="number" value={r.advance}
+                          <input type="number" value={r.advance} disabled={r.toDelete}
                             onChange={e => updateBulkRow(r.roomNumber, 'advance', e.target.value)}
                             style={{ width: '100%', background: 'var(--bg3)', border: '1px solid var(--border)', borderRadius: 5, padding: '6px 10px', color: 'var(--text)', outline: 'none', fontSize: '0.88rem' }}
                             placeholder="0" />
                         </td>
                         <td style={{ padding: '6px 10px' }}>
-                          <select value={r.maxCapacity}
+                          <select value={r.maxCapacity} disabled={r.toDelete}
                             onChange={e => updateBulkRow(r.roomNumber, 'maxCapacity', parseInt(e.target.value))}
                             style={{ background: 'var(--bg3)', border: '1px solid var(--border)', borderRadius: 5, padding: '6px 10px', color: 'var(--text)', outline: 'none', fontSize: '0.88rem' }}>
                             {Array.from({length:20},(_,i)=>i+1).map(n => <option key={n} value={n}>{n}</option>)}
                           </select>
+                        </td>
+                        <td style={{ padding: '6px 10px', textAlign: 'center' }}>
+                          <button
+                            onClick={() => r.isNew ? setBulkData(p => p.filter(x => x.roomNumber !== r.roomNumber)) : toggleDelete(r.roomNumber)}
+                            title={r.isNew ? 'Remove from list' : r.toDelete ? 'Undo delete' : 'Mark for deletion'}
+                            style={{ background: r.toDelete ? 'rgba(240,165,0,0.12)' : 'rgba(231,76,60,0.08)', border: `1px solid ${r.toDelete ? 'rgba(240,165,0,0.3)' : 'rgba(231,76,60,0.25)'}`, color: r.toDelete ? 'var(--accent)' : 'var(--danger)', borderRadius: 5, padding: '4px 10px', cursor: 'pointer', fontSize: '0.75rem', fontWeight: 600 }}>
+                            {r.isNew ? '✕ Remove' : r.toDelete ? '↩ Undo' : '🗑 Delete'}
+                          </button>
                         </td>
                       </tr>
                     ))}
                   </tbody>
                 </table>
               </div>
+              {bulkData.some(r => r.toDelete) && (
+                <div style={{ marginTop: 10, padding: '8px 12px', background: 'rgba(231,76,60,0.07)', border: '1px solid rgba(231,76,60,0.2)', borderRadius: 6, fontSize: '0.8rem', color: 'var(--danger)' }}>
+                  ⚠ {bulkData.filter(r => r.toDelete).length} room(s) marked for deletion. Rooms with active members will not be deleted.
+                </div>
+              )}
             </div>
             <div className="modal-footer">
               <button className="btn btn-secondary" onClick={() => setBulkMode(false)}>Cancel</button>
               <button className="btn btn-primary" onClick={saveBulk} disabled={saving}>
-                {saving ? 'Saving...' : 'Save All Rooms'}
+                {saving ? 'Saving...' : 'Save All Changes'}
               </button>
             </div>
           </div>

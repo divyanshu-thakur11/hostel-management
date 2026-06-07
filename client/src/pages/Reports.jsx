@@ -235,13 +235,14 @@ export default function Reports() {
       const key = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
       const lbl = d.toLocaleString('en-IN', { month:'short', year:'2-digit' });
       if (!map[key]) map[key] = { key, label:lbl, income:0, rent:0, electric:0, advance:0, other:0, count:0, cash:0, online:0 };
-      const amt = r.amountPaid || r.totalAmount || 0;
-      map[key].income   += amt;
-      map[key].rent     += r.rent     || 0;
-      map[key].electric += r.electric || 0;
-      map[key].advance  += r.advance  || 0;
-      map[key].other    += r.other    || 0;
-      map[key].count    += 1;
+      const amt  = r.amountPaid || r.totalAmount || 0;
+      const type = r.packageName || r.paymentType || 'other';
+      map[key].income += amt;
+      if (type === 'rent')          map[key].rent     += amt;
+      else if (type === 'electric') map[key].electric += amt;
+      else if (type === 'advance')  map[key].advance  += amt;
+      else                          map[key].other    += amt;
+      map[key].count += 1;
       if (r.modeOfPayment === 'cash')   map[key].cash   += amt;
       if (r.modeOfPayment === 'online') map[key].online += amt;
     });
@@ -254,10 +255,12 @@ export default function Reports() {
     receipts.forEach(r => {
       if (!r.roomNumber) return;
       if (!map[r.roomNumber]) map[r.roomNumber] = { room: r.roomNumber, total:0, rent:0, electric:0, count:0 };
-      map[r.roomNumber].total    += r.amountPaid || r.totalAmount || 0;
-      map[r.roomNumber].rent     += r.rent     || 0;
-      map[r.roomNumber].electric += r.electric || 0;
-      map[r.roomNumber].count    += 1;
+      const amt  = r.amountPaid || r.totalAmount || 0;
+      const type = r.packageName || r.paymentType || 'other';
+      map[r.roomNumber].total += amt;
+      if (type === 'rent')          map[r.roomNumber].rent     += amt;
+      else if (type === 'electric') map[r.roomNumber].electric += amt;
+      map[r.roomNumber].count += 1;
     });
     return Object.values(map).sort((a,b)=>b.total-a.total).slice(0,10).map(r=>({...r,label:`R${r.room}`}));
   }, [receipts]);

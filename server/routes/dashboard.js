@@ -30,15 +30,17 @@ router.get('/', async (req, res, next) => {
     const baseQ = hostelId ? { hostelId } : {};
 
     // ── FIX 2: Revenue via MongoDB aggregation — no 500-receipt cap ───────
-    // All revenue totals are computed by the DB, not JS. O(1) regardless of
-    // how many receipts exist.
+    // Use $cond+$gt instead of $ifNull: amountPaid defaults to 0 (not null),
+    // so $ifNull never substitutes. $cond correctly falls back to totalAmount
+    // when amountPaid is 0 (i.e. not set on older receipts).
+    const amtExpr = { $cond: [{ $gt: ['$amountPaid', 0] }, '$amountPaid', '$totalAmount'] };
     const revenueAgg = await Receipt.aggregate([
       { $match: hostelId ? { hostelId } : {} },
       { $group: {
         _id: null,
-        totalRevenue:  { $sum: { $ifNull: ['$amountPaid', '$totalAmount'] } },
-        cashRevenue:   { $sum: { $cond: [{ $eq: ['$modeOfPayment','cash']  }, { $ifNull: ['$amountPaid','$totalAmount'] }, 0] } },
-        onlineRevenue: { $sum: { $cond: [{ $eq: ['$modeOfPayment','online'] }, { $ifNull: ['$amountPaid','$totalAmount'] }, 0] } },
+        totalRevenue:    { $sum: amtExpr },
+        cashRevenue:     { $sum: { $cond: [{ $eq: ['$modeOfPayment','cash']  }, amtExpr, 0] } },
+        onlineRevenue:   { $sum: { $cond: [{ $eq: ['$modeOfPayment','online'] }, amtExpr, 0] } },
         totalBalanceDue: { $sum: { $ifNull: ['$balanceDue', 0] } },
       }},
     ]);
@@ -50,7 +52,7 @@ router.get('/', async (req, res, next) => {
       { $match: hostelId ? { hostelId, receiptDate: { $gte: trendStart } } : { receiptDate: { $gte: trendStart } } },
       { $group: {
         _id: { year: { $year: '$receiptDate' }, month: { $month: '$receiptDate' } },
-        amount: { $sum: { $ifNull: ['$amountPaid', '$totalAmount'] } },
+        amount: { $sum: { $cond: [{ $gt: ['$amountPaid', 0] }, '$amountPaid', '$totalAmount'] } },
       }},
     ]);
     const trendMap = {};

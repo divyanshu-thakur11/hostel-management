@@ -81,4 +81,78 @@ router.get('/export-csv/:collection', async (req, res, next) => {
   } catch(err) { next(err); }
 });
 
+// ── Restore from JSON backup ─────────────────────────────────────────────────
+// POST /api/backup/restore
+// Body: the JSON backup file contents (parsed)
+// Strategy: for each collection, delete all existing docs for this hostelId,
+//   then re-insert the backed-up docs (stripping _id so Mongo re-generates clean ones,
+//   but preserving hostelId). A dry-run param lets the UI show counts before committing.
+router.post('/restore', async (req, res, next) => {
+  try {
+    const hostelId = req.hostelId;
+    if (!hostelId) return res.status(400).json({ message: 'Cannot restore: no hostelId in token' });
+
+    const { data, dryRun } = req.body;
+    if (!data) return res.status(400).json({ message: 'No data field in request body' });
+
+    const { members = [], archivedMembers = [], receipts = [], electric = [], salaries = [] } = data;
+
+    // Counts for dry-run preview
+    const incoming = {
+      members:         members.length,
+      archivedMembers: archivedMembers.length,
+      receipts:        receipts.length,
+      electric:        electric.length,
+      salaries:        salaries.length,
+    };
+
+    if (dryRun) {
+      // Just report what would be restored — no writes
+      const existing = await Promise.all([
+        Member.countDocuments({ hostelId }),
+        ArchivedMember.countDocuments({ hostelId }),
+        Receipt.countDocuments({ hostelId }),
+        Electric.countDocuments({ hostelId }),
+        Salary.countDocuments({ hostelId }),
+      ]);
+      return res.json({
+        dryRun: true,
+        incoming,
+        existing: { members: existing[0], archivedMembers: existing[1], receipts: existing[2], electric: existing[3], salaries: existing[4] },
+      });
+    }
+
+    // Strip _id from each doc and force hostelId to current user's hostelId
+    const clean = (docs) => docs.map(({ _id, __v, ...rest }) => ({ ...rest, hostelId }));
+
+    // Delete existing data for this hostel then re-insert
+    await Promise.all([
+      Member.deleteMany({ hostelId }),
+      ArchivedMember.deleteMany({ hostelId }),
+      Receipt.deleteMany({ hostelId }),
+      Electric.deleteMany({ hostelId }),
+      Salary.deleteMany({ hostelId }),
+    ]);
+
+    const results = await Promise.all([
+      members.length         ? Member.insertMany(clean(members),         { ordered: false }) : [],
+      archivedMembers.length ? ArchivedMember.insertMany(clean(archivedMembers), { ordered: false }) : [],
+      receipts.length        ? Receipt.insertMany(clean(receipts),       { ordered: false }) : [],
+      electric.length        ? Electric.insertMany(clean(electric),      { ordered: false }) : [],
+      salaries.length        ? Salary.insertMany(clean(salaries),        { ordered: false }) : [],
+    ]);
+
+    const restored = {
+      members:         Array.isArray(results[0]) ? results[0].length : (results[0].insertedCount || 0),
+      archivedMembers: Array.isArray(results[1]) ? results[1].length : (results[1].insertedCount || 0),
+      receipts:        Array.isArray(results[2]) ? results[2].length : (results[2].insertedCount || 0),
+      electric:        Array.isArray(results[3]) ? results[3].length : (results[3].insertedCount || 0),
+      salaries:        Array.isArray(results[4]) ? results[4].length : (results[4].insertedCount || 0),
+    };
+
+    logger.info('Backup restored', { by: req.user.username, hostelId, restored });
+    res.json({ success: true, restored });
+  } catch(err) { next(err); }
+});
+
 module.exports = router;

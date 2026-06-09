@@ -130,11 +130,13 @@ export const auditAPI = {
 };
 
 export const backupAPI = {
-  trigger:   ()    => api.post('/backup/trigger'),
-  download:  ()    => api.get('/backup/export-json', { responseType: 'blob' }),
-  list:      ()    => api.get('/backup/list'),
-  exportJSON: ()   => api.get('/backup/export-json', { responseType: 'blob' }),
-  exportCSV:  (col)=> api.get(`/backup/export-csv/${col}`, { responseType: 'blob' }),
+  trigger:        ()        => api.post('/backup/trigger'),
+  download:       ()        => api.get('/backup/export-json', { responseType: 'blob' }),
+  list:           ()        => api.get('/backup/list'),
+  exportJSON:     ()        => api.get('/backup/export-json', { responseType: 'blob' }),
+  exportCSV:      (col)     => api.get(`/backup/export-csv/${col}`, { responseType: 'blob' }),
+  dryRunRestore:  (data)    => api.post('/backup/restore', { data, dryRun: true }),
+  restore:        (data)    => api.post('/backup/restore', { data, dryRun: false }),
 };
 
 export const syncAPI = {

@@ -19,7 +19,7 @@ exports.list = async (req, res, next) => {
   try {
     const hostelId = await getHostelId(req);
     const page = Math.max(1, parseInt(req.query.page) || 1);
-    const limit = Math.min(100, parseInt(req.query.limit) || 50);
+    const limit = Math.min(2000, parseInt(req.query.limit) || 50);
     const skip = (page - 1) * limit;
     const query = hostelId ? { hostelId } : {};
     if (req.query.room) query.roomNumber = parseInt(req.query.room);

@@ -39,7 +39,7 @@ const CT = ({ active, payload, label }) => {
 const Insight = ({ icon, text, color = C.gold }) => (
   <div style={{display:'flex',alignItems:'flex-start',gap:8,padding:'8px 12px',background:`${color}11`,border:`1px solid ${color}33`,borderRadius:8,fontSize:'0.78rem',color:'var(--text2)'}}>
     <span style={{fontSize:'1rem',flexShrink:0}}>{icon}</span>
-    <span dangerouslySetInnerHTML={{__html:text}} />
+    <span>{text}</span>
   </div>
 );
 
@@ -344,50 +344,50 @@ export default function Reports() {
       const prev  = monthlyData[monthlyData.length-2];
       const delta = last.income - prev.income;
       const pct   = prev.income > 0 ? Math.round(Math.abs(delta)/prev.income*100) : 0;
-      if (delta > 0) ins.push({ icon:'📈', text:`Revenue <strong>up ${pct}%</strong> this month (₹${fmt(delta)} more than last month)`, color:C.green });
-      if (delta < 0) ins.push({ icon:'📉', text:`Revenue <strong>down ${pct}%</strong> this month (₹${fmt(Math.abs(delta))} less than last month)`, color:C.red });
+      if (delta > 0) ins.push({ icon:'📈', text:`Revenue up ${pct}% this month (₹${fmt(delta)} more than last month)`, color:C.green });
+      if (delta < 0) ins.push({ icon:'📉', text:`Revenue down ${pct}% this month (₹${fmt(Math.abs(delta))} less than last month)`, color:C.red });
     }
     // Best month
     if (monthlyData.length > 0) {
       const best = [...monthlyData].sort((a,b)=>b.income-a.income)[0];
-      ins.push({ icon:'🏆', text:`Best month: <strong>${best.label}</strong> with ₹${fmt(best.income)} income`, color:C.gold });
+      ins.push({ icon:'🏆', text:`Best month: ${best.label} with ₹${fmt(best.income)} income`, color:C.gold });
     }
     // Online adoption
     if (totalIncome > 0) {
       const onlinePct = Math.round(onlineTotal/totalIncome*100);
-      if (onlinePct >= 60) ins.push({ icon:'📱', text:`<strong>${onlinePct}%</strong> payments are online — excellent digital adoption`, color:C.teal });
-      else if (onlinePct <= 30) ins.push({ icon:'💵', text:`Only <strong>${onlinePct}%</strong> online payments — consider encouraging UPI/online`, color:C.orange });
+      if (onlinePct >= 60) ins.push({ icon:'📱', text:`${onlinePct}% payments are online — excellent digital adoption`, color:C.teal });
+      else if (onlinePct <= 30) ins.push({ icon:'💵', text:`Only ${onlinePct}% online payments — consider encouraging UPI/online`, color:C.orange });
     }
     // Dues warning
     if (totalDues > 0) {
-      ins.push({ icon:'⚠️', text:`₹${fmt(totalDues)} in <strong>pending dues</strong> from part payments — follow up needed`, color:C.red });
+      ins.push({ icon:'⚠️', text:`₹${fmt(totalDues)} in pending dues from part payments — follow up needed`, color:C.red });
     }
     // Police verification gap
     const unverified = members.filter(m=>m.isActive!==false&&!m.policeFormVerified).length;
-    if (unverified > 0) ins.push({ icon:'🚔', text:`<strong>${unverified} member${unverified>1?'s':''}</strong> without police verification — compliance risk`, color:C.orange });
+    if (unverified > 0) ins.push({ icon:'🚔', text:`${unverified} member${unverified>1?'s':''} without police verification — compliance risk`, color:C.orange });
     // Top paying day
     if (dowData.length > 0) {
       const topDay = [...dowData].sort((a,b)=>b.amount-a.amount)[0];
-      if (topDay.count > 0) ins.push({ icon:'📅', text:`Most payments happen on <strong>${topDay.day}</strong> — schedule follow-ups accordingly`, color:C.blue });
+      if (topDay.count > 0) ins.push({ icon:'📅', text:`Most payments happen on ${topDay.day} — schedule follow-ups accordingly`, color:C.blue });
     }
     // Low occupancy months
     const lowMonths = collectionRate.filter(m=>m.rate < 60 && m.count > 0);
-    if (lowMonths.length > 0) ins.push({ icon:'🔍', text:`Low collection rate in <strong>${lowMonths.map(m=>m.label).join(', ')}</strong> — may indicate payment delays`, color:C.purple });
+    if (lowMonths.length > 0) ins.push({ icon:'🔍', text:`Low collection rate in ${lowMonths.map(m=>m.label).join(', ')} — may indicate payment delays`, color:C.purple });
     // High electric rooms
     if (elecByRoom.length > 0) {
       const highElec = elecByRoom[0];
-      ins.push({ icon:'⚡', text:`Room <strong>${highElec.room}</strong> is highest electricity consumer (${highElec.units} units) — check for excess usage`, color:C.orange });
+      ins.push({ icon:'⚡', text:`Room ${highElec.room} is highest electricity consumer (${highElec.units} units) — check for excess usage`, color:C.orange });
     }
     // Long tenure members
     const longStay = members.filter(m => {
       if (!m.roomJoinDate || m.isActive===false) return false;
       return (new Date() - new Date(m.roomJoinDate)) > 365*24*60*60*1000;
     });
-    if (longStay.length > 0) ins.push({ icon:'🌟', text:`<strong>${longStay.length} loyal member${longStay.length>1?'s':''}</strong> staying 1+ year — consider loyalty benefit`, color:C.green });
+    if (longStay.length > 0) ins.push({ icon:'🌟', text:`${longStay.length} loyal member${longStay.length>1?'s':''} staying 1+ year — consider loyalty benefit`, color:C.green });
     // Net margin
     if (totalIncome > 0 && totalExpend > 0) {
       const margin = Math.round((netBalance/totalIncome)*100);
-      ins.push({ icon:'💹', text:`Net margin: <strong>${margin}%</strong> (₹${fmt(netBalance)} of ₹${fmt(totalIncome)} income kept after expenses)`, color: margin>=60?C.green:margin>=30?C.gold:C.red });
+      ins.push({ icon:'💹', text:`Net margin: ${margin}% (₹${fmt(netBalance)} of ₹${fmt(totalIncome)} income kept after expenses)`, color: margin>=60?C.green:margin>=30?C.gold:C.red });
     }
     return ins;
   }, [monthlyData, totalIncome, onlineTotal, totalDues, members, dowData, collectionRate, elecByRoom, netBalance, totalExpend]);
@@ -489,13 +489,13 @@ export default function Reports() {
 
           {/* KPI Cards */}
           <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(165px,1fr))',gap:12}}>
-            <StatCard icon="💰" label="Total Income"      value={`₹${fmtK(totalIncome)}`}    color={C.green} sub={`${receipts.length} receipts`} />
-            <StatCard icon="📤" label="Total Expenditure" value={`₹${fmtK(totalExpend)}`}    color={C.red}   sub="Salary + Maintenance" />
-            <StatCard icon="💹" label="Net Balance"       value={`₹${fmtK(netBalance)}`}     color={netBalance>=0?C.green:C.red} sub={totalIncome>0?`${Math.round(netBalance/totalIncome*100)}% margin`:''} />
+            <StatCard icon="💰" label="Total Income"      value={fmtK(totalIncome)}    color={C.green} sub={`${receipts.length} receipts`} />
+            <StatCard icon="📤" label="Total Expenditure" value={fmtK(totalExpend)}    color={C.red}   sub="Salary + Maintenance" />
+            <StatCard icon="💹" label="Net Balance"       value={fmtK(netBalance)}     color={netBalance>=0?C.green:C.red} sub={totalIncome>0?`${Math.round(netBalance/totalIncome*100)}% margin`:''} />
             <StatCard icon="👥" label="Active Members"    value={activeMembers.length}        color={C.blue}  sub={`of ${members.length} total`} />
-            <StatCard icon="💵" label="Cash Collected"    value={`₹${fmtK(cashTotal)}`}      sub={totalIncome>0?`${Math.round(cashTotal/totalIncome*100)}% of income`:''} />
-            <StatCard icon="📱" label="Online Collected"  value={`₹${fmtK(onlineTotal)}`}    color={C.teal}  sub={totalIncome>0?`${Math.round(onlineTotal/totalIncome*100)}% of income`:''} />
-            <StatCard icon="⚠️" label="Pending Dues"      value={`₹${fmtK(totalDues)}`}      color={totalDues>0?C.red:'var(--text3)'} sub="Part payment balances" />
+            <StatCard icon="💵" label="Cash Collected"    value={fmtK(cashTotal)}      sub={totalIncome>0?`${Math.round(cashTotal/totalIncome*100)}% of income`:''} />
+            <StatCard icon="📱" label="Online Collected"  value={fmtK(onlineTotal)}    color={C.teal}  sub={totalIncome>0?`${Math.round(onlineTotal/totalIncome*100)}% of income`:''} />
+            <StatCard icon="⚠️" label="Pending Dues"      value={fmtK(totalDues)}      color={totalDues>0?C.red:'var(--text3)'} sub="Part payment balances" />
             <StatCard icon="🚔" label="Police Unverified" value={members.filter(m=>m.isActive!==false&&!m.policeFormVerified).length} color={C.orange} sub="Compliance gap" />
           </div>
 

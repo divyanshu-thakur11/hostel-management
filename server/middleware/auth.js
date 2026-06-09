@@ -1,6 +1,7 @@
 const jwt = require('jsonwebtoken');
 
-const JWT_SECRET = process.env.JWT_SECRET || 'hostel_super_secret_change_in_production';
+const JWT_SECRET = process.env.JWT_SECRET;
+if (!JWT_SECRET) throw new Error('JWT_SECRET environment variable is not set. Set it in your .env file or Render dashboard.');
 const COOKIE_NAME = 'hm_token';
 
 // Read token from HttpOnly cookie first, fall back to Authorization header

@@ -128,6 +128,11 @@ export default function DuesAndPayments() {
         })
         .reduce((s, rec) => s + (rec.amountPaid ?? rec.totalAmount ?? 0), 0);
 
+      // Track advance paid this month separately so it can be shown in the UI
+      const advancePaidThisMonth = roomReceiptsThisMonth
+        .filter(rec => (rec.packageName || rec.paymentType || '') === 'advance')
+        .reduce((s, rec) => s + (rec.amountPaid ?? rec.totalAmount ?? 0), 0);
+
       // Due = fixed rent minus whatever has been paid. If paid >= fixedRent, due = 0.
       // If advance was paid this month and exceeds rent, credit shows as 0 due (no negative).
       const rentDue = Math.max(0, fixedRent - rentPaidThisMonth);
@@ -165,6 +170,7 @@ export default function DuesAndPayments() {
         memberCount: r.memberCount,
         fixedRent,
         rentPaidThisMonth,
+        advancePaidThisMonth,
         rentDue,
         elecTotal,
         elecPaid,
@@ -176,7 +182,7 @@ export default function DuesAndPayments() {
         memberNames: (r.members || []).map(m => m.name).join(', '),
       };
     })
-    .filter(r => r !== null && r.totalDue > 0)
+    .filter(r => r !== null && (r.totalDue > 0 || r.advancePaidThisMonth > 0))
     .sort((a, b) => b.totalDue - a.totalDue);
 
   const totalRentDue  = roomDues.reduce((s, r) => s + r.rentDue, 0);
@@ -208,8 +214,7 @@ export default function DuesAndPayments() {
           primary,
           others,
           memberNames: allMembers.map(m => m.name).join(', '),
-        };
-      })
+        };      })
       .sort((a, b) => b.totalDue - a.totalDue);
   })();
 
@@ -323,6 +328,7 @@ export default function DuesAndPayments() {
                   <td>${g.memberNames}</td>
                   <td>${mobile}</td>
                   <td>${expiryCell}</td>
+                  <td class="green">${(g.advancePaidThisMonth||0)>0?'₹'+(g.advancePaidThisMonth||0).toLocaleString('en-IN'):'—'}</td>
                   <td class="red">₹${(g.rentDue||0).toLocaleString('en-IN')}</td>
                   <td class="${g.elecDue>0?'gold':''}">₹${(g.elecDue||0).toLocaleString('en-IN')}</td>
                   <td class="${g.partDue>0?'purple':''}">₹${(g.partDue||0).toLocaleString('en-IN')}</td>
@@ -332,7 +338,7 @@ export default function DuesAndPayments() {
               doPrint(`Room Dues as of ${today.toLocaleDateString('en-IN')}`, `
                 <h2>Rooms with Outstanding Dues — as of ${today.toLocaleDateString('en-IN')}</h2>
                 <p>Grand Total Due: ₹${totalDueAll.toLocaleString('en-IN')} across ${dueDateRooms.length} rooms</p>
-                <table><thead><tr><th>Room</th><th>Members</th><th>Mobile</th><th>Plan Expiry</th><th>Rent Due</th><th>Electric Due</th><th>Part-Pay Balance</th><th>Total Due</th></tr></thead>
+                <table><thead><tr><th>Room</th><th>Members</th><th>Mobile</th><th>Plan Expiry</th><th>Advance Paid</th><th>Rent Due</th><th>Electric Due</th><th>Part-Pay Balance</th><th>Total Due</th></tr></thead>
                 <tbody>${rows}</tbody></table>`);
             }}>🖨 Print Dues List</button>
           </div>
@@ -348,6 +354,7 @@ export default function DuesAndPayments() {
                       <th>Room</th>
                       <th>Primary Member</th>
                       <th>Plan Expiry</th>
+                      <th>Advance Paid</th>
                       <th>Rent Due</th>
                       <th>Electric Due</th>
                       <th>Part-Pay Balance</th>
@@ -384,6 +391,9 @@ export default function DuesAndPayments() {
                                 </div>
                               );
                             })()}
+                          </td>
+                          <td style={{color:g.advancePaidThisMonth>0?'var(--success)':'var(--text3)',fontWeight:g.advancePaidThisMonth>0?700:400}}>
+                            {g.advancePaidThisMonth>0 ? <span title="Advance paid this month">✅ {fmtM(g.advancePaidThisMonth)}</span> : '—'}
                           </td>
                           <td style={{color:g.rentDue>0?'var(--danger)':'var(--text3)',fontWeight:g.rentDue>0?700:400}}>
                             {g.rentDue>0 ? fmtM(g.rentDue) : '—'}
@@ -431,7 +441,7 @@ export default function DuesAndPayments() {
                           <tr key={om._id} style={{background:'var(--bg3)',opacity:0.85,borderBottom:oi===g.others.length-1?'1px solid var(--border)':'none'}}>
                             <td style={{paddingLeft:24,color:'var(--text3)',fontSize:'0.75rem'}}>↳ same room</td>
                             <td style={{color:'var(--text2)',fontSize:'0.83rem'}}>{om.name}</td>
-                            <td colSpan={5} style={{color:'var(--text3)',fontSize:'0.75rem'}}>same dues as above</td>
+                            <td colSpan={6} style={{color:'var(--text3)',fontSize:'0.75rem'}}>same dues as above</td>
                             <td>
                               {om.mobileNo && (
                                 <button style={{background:'#25d366',color:'white',border:'none',borderRadius:5,padding:'3px 7px',cursor:'pointer',fontSize:'0.7rem',fontWeight:700}}

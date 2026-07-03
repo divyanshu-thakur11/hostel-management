@@ -90,6 +90,10 @@ export default function DuesAndPayments() {
   const getElecDueForRoom = (roomNumber) => {
     const reading = electric.find(e => e.roomNumber === roomNumber && e.month === curMon && e.year === curYr);
     if (!reading) return { elecTotal: 0, elecPaid: 0, elecDue: 0 };
+    // Waived bills don't count as due or as income
+    if (reading.paymentStatus === 'waived') return { elecTotal: 0, elecPaid: 0, elecDue: 0 };
+    // Already marked paid directly on the reading — no due
+    if (reading.paymentStatus === 'paid') return { elecTotal: reading.totalAmount || 0, elecPaid: reading.totalAmount || 0, elecDue: 0 };
     const elecTotal = reading.totalAmount || 0;
     const elecPaid  = receipts.filter(r =>
       r.roomNumber === roomNumber &&
@@ -128,20 +132,17 @@ export default function DuesAndPayments() {
         })
         .reduce((s, rec) => s + (rec.amountPaid ?? rec.totalAmount ?? 0), 0);
 
-      // Track advance paid this month separately so it can be shown in the UI
-      const advancePaidThisMonth = roomReceiptsThisMonth
-        .filter(rec => (rec.packageName || rec.paymentType || '') === 'advance')
-        .reduce((s, rec) => s + (rec.amountPaid ?? rec.totalAmount ?? 0), 0);
-
       // Due = fixed rent minus whatever has been paid. If paid >= fixedRent, due = 0.
       // If advance was paid this month and exceeds rent, credit shows as 0 due (no negative).
       const rentDue = Math.max(0, fixedRent - rentPaidThisMonth);
 
       // Electric: current month's reading
       const elecReading = electric.find(e => e.roomNumber === rNum && e.month === curMon && e.year === curYr);
-      const elecTotal = elecReading?.totalAmount || 0;
+      // Waived bills are written off — zero due, zero income
+      const elecWaived  = elecReading?.paymentStatus === 'waived';
+      const elecTotal   = (elecWaived ? 0 : elecReading?.totalAmount) || 0;
       // Electric paid this month — via explicit electric receipts
-      const elecPaidDirect = receipts
+      const elecPaidDirect = elecWaived ? 0 : receipts
         .filter(rec =>
           rec.roomNumber === rNum &&
           (rec.packageName === 'electric' || rec.paymentType === 'electric') &&
@@ -151,18 +152,17 @@ export default function DuesAndPayments() {
         )
         .reduce((s, rec) => s + (rec.amountPaid ?? rec.totalAmount ?? 0), 0);
       // Electric also paid if a 'final' receipt this month includes it.
-      // FIX 5: use the dedicated electricAmount field (set since the model update).
-      // Fall back to notes regex for older receipts created before the field existed.
-      const elecPaidInFinal = roomReceiptsThisMonth
+      const elecPaidInFinal = elecWaived ? 0 : roomReceiptsThisMonth
         .filter(rec => (rec.packageName === 'final' || rec.paymentType === 'final'))
         .reduce((s, rec) => {
           if (rec.electricAmount && rec.electricAmount > 0) return s + rec.electricAmount;
-          // Legacy fallback: parse notes string for receipts saved before the field existed
           const m = (rec.notes || '').match(/Electric\s+[\w]+:\s*₹([\d,]+)/);
           return s + (m ? parseInt(m[1].replace(/,/g, '')) : 0);
         }, 0);
-      const elecPaid = elecPaidDirect + elecPaidInFinal;
-      const elecDue = Math.max(0, elecTotal - elecPaid);
+      // If reading is marked paid directly on the reading object, treat as fully paid
+      const elecDirectlyPaid = !elecWaived && elecReading?.paymentStatus === 'paid' ? elecTotal : 0;
+      const elecPaid = elecPaidDirect + elecPaidInFinal + elecDirectlyPaid;
+      const elecDue  = Math.max(0, elecTotal - elecPaid);
 
       return {
         roomNumber: rNum,
@@ -170,7 +170,6 @@ export default function DuesAndPayments() {
         memberCount: r.memberCount,
         fixedRent,
         rentPaidThisMonth,
-        advancePaidThisMonth,
         rentDue,
         elecTotal,
         elecPaid,
@@ -182,7 +181,7 @@ export default function DuesAndPayments() {
         memberNames: (r.members || []).map(m => m.name).join(', '),
       };
     })
-    .filter(r => r !== null && (r.totalDue > 0 || r.advancePaidThisMonth > 0))
+    .filter(r => r !== null && r.totalDue > 0)
     .sort((a, b) => b.totalDue - a.totalDue);
 
   const totalRentDue  = roomDues.reduce((s, r) => s + r.rentDue, 0);
@@ -214,7 +213,8 @@ export default function DuesAndPayments() {
           primary,
           others,
           memberNames: allMembers.map(m => m.name).join(', '),
-        };      })
+        };
+      })
       .sort((a, b) => b.totalDue - a.totalDue);
   })();
 
@@ -328,7 +328,6 @@ export default function DuesAndPayments() {
                   <td>${g.memberNames}</td>
                   <td>${mobile}</td>
                   <td>${expiryCell}</td>
-                  <td class="green">${(g.advancePaidThisMonth||0)>0?'₹'+(g.advancePaidThisMonth||0).toLocaleString('en-IN'):'—'}</td>
                   <td class="red">₹${(g.rentDue||0).toLocaleString('en-IN')}</td>
                   <td class="${g.elecDue>0?'gold':''}">₹${(g.elecDue||0).toLocaleString('en-IN')}</td>
                   <td class="${g.partDue>0?'purple':''}">₹${(g.partDue||0).toLocaleString('en-IN')}</td>
@@ -338,7 +337,7 @@ export default function DuesAndPayments() {
               doPrint(`Room Dues as of ${today.toLocaleDateString('en-IN')}`, `
                 <h2>Rooms with Outstanding Dues — as of ${today.toLocaleDateString('en-IN')}</h2>
                 <p>Grand Total Due: ₹${totalDueAll.toLocaleString('en-IN')} across ${dueDateRooms.length} rooms</p>
-                <table><thead><tr><th>Room</th><th>Members</th><th>Mobile</th><th>Plan Expiry</th><th>Advance Paid</th><th>Rent Due</th><th>Electric Due</th><th>Part-Pay Balance</th><th>Total Due</th></tr></thead>
+                <table><thead><tr><th>Room</th><th>Members</th><th>Mobile</th><th>Plan Expiry</th><th>Rent Due</th><th>Electric Due</th><th>Part-Pay Balance</th><th>Total Due</th></tr></thead>
                 <tbody>${rows}</tbody></table>`);
             }}>🖨 Print Dues List</button>
           </div>
@@ -354,7 +353,6 @@ export default function DuesAndPayments() {
                       <th>Room</th>
                       <th>Primary Member</th>
                       <th>Plan Expiry</th>
-                      <th>Advance Paid</th>
                       <th>Rent Due</th>
                       <th>Electric Due</th>
                       <th>Part-Pay Balance</th>
@@ -391,9 +389,6 @@ export default function DuesAndPayments() {
                                 </div>
                               );
                             })()}
-                          </td>
-                          <td style={{color:g.advancePaidThisMonth>0?'var(--success)':'var(--text3)',fontWeight:g.advancePaidThisMonth>0?700:400}}>
-                            {g.advancePaidThisMonth>0 ? <span title="Advance paid this month">✅ {fmtM(g.advancePaidThisMonth)}</span> : '—'}
                           </td>
                           <td style={{color:g.rentDue>0?'var(--danger)':'var(--text3)',fontWeight:g.rentDue>0?700:400}}>
                             {g.rentDue>0 ? fmtM(g.rentDue) : '—'}
@@ -441,7 +436,7 @@ export default function DuesAndPayments() {
                           <tr key={om._id} style={{background:'var(--bg3)',opacity:0.85,borderBottom:oi===g.others.length-1?'1px solid var(--border)':'none'}}>
                             <td style={{paddingLeft:24,color:'var(--text3)',fontSize:'0.75rem'}}>↳ same room</td>
                             <td style={{color:'var(--text2)',fontSize:'0.83rem'}}>{om.name}</td>
-                            <td colSpan={6} style={{color:'var(--text3)',fontSize:'0.75rem'}}>same dues as above</td>
+                            <td colSpan={5} style={{color:'var(--text3)',fontSize:'0.75rem'}}>same dues as above</td>
                             <td>
                               {om.mobileNo && (
                                 <button style={{background:'#25d366',color:'white',border:'none',borderRadius:5,padding:'3px 7px',cursor:'pointer',fontSize:'0.7rem',fontWeight:700}}

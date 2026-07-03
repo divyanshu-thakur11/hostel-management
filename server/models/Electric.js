@@ -11,6 +11,11 @@ const electricSchema = new mongoose.Schema({
   ratePerUnit: { type: Number, default: 8 },
   totalAmount: { type: Number },
   isAnomaly: { type: Boolean, default: false }, // F3: anomaly detection flag
+  // Payment tracking
+  paymentStatus: { type: String, enum: ['unpaid', 'paid', 'waived'], default: 'unpaid' },
+  waivedReason:  { type: String, default: '' },
+  waivedBy:      { type: String, default: '' },
+  waivedAt:      { type: Date },
 }, { timestamps: true });
 
 electricSchema.pre('save', function(next) {

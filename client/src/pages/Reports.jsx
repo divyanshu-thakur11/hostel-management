@@ -39,7 +39,7 @@ const CT = ({ active, payload, label }) => {
 const Insight = ({ icon, text, color = C.gold }) => (
   <div style={{display:'flex',alignItems:'flex-start',gap:8,padding:'8px 12px',background:`${color}11`,border:`1px solid ${color}33`,borderRadius:8,fontSize:'0.78rem',color:'var(--text2)'}}>
     <span style={{fontSize:'1rem',flexShrink:0}}>{icon}</span>
-    <span>{text}</span>
+    <span dangerouslySetInnerHTML={{__html:text}} />
   </div>
 );
 
@@ -198,7 +198,6 @@ export default function Reports() {
   const [filters,  setFilters]  = useState({ room:'', mode:'', type:'', search:'', from:'', to:'', partPay:'' });
   const [loading,  setLoading]  = useState(true);
   const [exporting,setExporting]= useState('');
-  const [restore,  setRestore]  = useState({ step: 'idle', preview: null, error: null, file: null });
 
   useEffect(() => {
     setLoading(true);
@@ -294,6 +293,8 @@ export default function Reports() {
   const elecByRoom = useMemo(() => {
     const map = {};
     electric.forEach(e => {
+      // Don't count waived bills in consumption totals
+      if (e.paymentStatus === 'waived') return;
       if (!map[e.roomNumber]) map[e.roomNumber] = { room:e.roomNumber, units:0, amount:0, readings:0 };
       map[e.roomNumber].units    += (e.endReading - e.startReading) || e.unitsConsumed || 0;
       map[e.roomNumber].amount   += e.totalAmount || 0;
@@ -345,50 +346,50 @@ export default function Reports() {
       const prev  = monthlyData[monthlyData.length-2];
       const delta = last.income - prev.income;
       const pct   = prev.income > 0 ? Math.round(Math.abs(delta)/prev.income*100) : 0;
-      if (delta > 0) ins.push({ icon:'📈', text:`Revenue up ${pct}% this month (₹${fmt(delta)} more than last month)`, color:C.green });
-      if (delta < 0) ins.push({ icon:'📉', text:`Revenue down ${pct}% this month (₹${fmt(Math.abs(delta))} less than last month)`, color:C.red });
+      if (delta > 0) ins.push({ icon:'📈', text:`Revenue <strong>up ${pct}%</strong> this month (₹${fmt(delta)} more than last month)`, color:C.green });
+      if (delta < 0) ins.push({ icon:'📉', text:`Revenue <strong>down ${pct}%</strong> this month (₹${fmt(Math.abs(delta))} less than last month)`, color:C.red });
     }
     // Best month
     if (monthlyData.length > 0) {
       const best = [...monthlyData].sort((a,b)=>b.income-a.income)[0];
-      ins.push({ icon:'🏆', text:`Best month: ${best.label} with ₹${fmt(best.income)} income`, color:C.gold });
+      ins.push({ icon:'🏆', text:`Best month: <strong>${best.label}</strong> with ₹${fmt(best.income)} income`, color:C.gold });
     }
     // Online adoption
     if (totalIncome > 0) {
       const onlinePct = Math.round(onlineTotal/totalIncome*100);
-      if (onlinePct >= 60) ins.push({ icon:'📱', text:`${onlinePct}% payments are online — excellent digital adoption`, color:C.teal });
-      else if (onlinePct <= 30) ins.push({ icon:'💵', text:`Only ${onlinePct}% online payments — consider encouraging UPI/online`, color:C.orange });
+      if (onlinePct >= 60) ins.push({ icon:'📱', text:`<strong>${onlinePct}%</strong> payments are online — excellent digital adoption`, color:C.teal });
+      else if (onlinePct <= 30) ins.push({ icon:'💵', text:`Only <strong>${onlinePct}%</strong> online payments — consider encouraging UPI/online`, color:C.orange });
     }
     // Dues warning
     if (totalDues > 0) {
-      ins.push({ icon:'⚠️', text:`₹${fmt(totalDues)} in pending dues from part payments — follow up needed`, color:C.red });
+      ins.push({ icon:'⚠️', text:`₹${fmt(totalDues)} in <strong>pending dues</strong> from part payments — follow up needed`, color:C.red });
     }
     // Police verification gap
     const unverified = members.filter(m=>m.isActive!==false&&!m.policeFormVerified).length;
-    if (unverified > 0) ins.push({ icon:'🚔', text:`${unverified} member${unverified>1?'s':''} without police verification — compliance risk`, color:C.orange });
+    if (unverified > 0) ins.push({ icon:'🚔', text:`<strong>${unverified} member${unverified>1?'s':''}</strong> without police verification — compliance risk`, color:C.orange });
     // Top paying day
     if (dowData.length > 0) {
       const topDay = [...dowData].sort((a,b)=>b.amount-a.amount)[0];
-      if (topDay.count > 0) ins.push({ icon:'📅', text:`Most payments happen on ${topDay.day} — schedule follow-ups accordingly`, color:C.blue });
+      if (topDay.count > 0) ins.push({ icon:'📅', text:`Most payments happen on <strong>${topDay.day}</strong> — schedule follow-ups accordingly`, color:C.blue });
     }
     // Low occupancy months
     const lowMonths = collectionRate.filter(m=>m.rate < 60 && m.count > 0);
-    if (lowMonths.length > 0) ins.push({ icon:'🔍', text:`Low collection rate in ${lowMonths.map(m=>m.label).join(', ')} — may indicate payment delays`, color:C.purple });
+    if (lowMonths.length > 0) ins.push({ icon:'🔍', text:`Low collection rate in <strong>${lowMonths.map(m=>m.label).join(', ')}</strong> — may indicate payment delays`, color:C.purple });
     // High electric rooms
     if (elecByRoom.length > 0) {
       const highElec = elecByRoom[0];
-      ins.push({ icon:'⚡', text:`Room ${highElec.room} is highest electricity consumer (${highElec.units} units) — check for excess usage`, color:C.orange });
+      ins.push({ icon:'⚡', text:`Room <strong>${highElec.room}</strong> is highest electricity consumer (${highElec.units} units) — check for excess usage`, color:C.orange });
     }
     // Long tenure members
     const longStay = members.filter(m => {
       if (!m.roomJoinDate || m.isActive===false) return false;
       return (new Date() - new Date(m.roomJoinDate)) > 365*24*60*60*1000;
     });
-    if (longStay.length > 0) ins.push({ icon:'🌟', text:`${longStay.length} loyal member${longStay.length>1?'s':''} staying 1+ year — consider loyalty benefit`, color:C.green });
+    if (longStay.length > 0) ins.push({ icon:'🌟', text:`<strong>${longStay.length} loyal member${longStay.length>1?'s':''}</strong> staying 1+ year — consider loyalty benefit`, color:C.green });
     // Net margin
     if (totalIncome > 0 && totalExpend > 0) {
       const margin = Math.round((netBalance/totalIncome)*100);
-      ins.push({ icon:'💹', text:`Net margin: ${margin}% (₹${fmt(netBalance)} of ₹${fmt(totalIncome)} income kept after expenses)`, color: margin>=60?C.green:margin>=30?C.gold:C.red });
+      ins.push({ icon:'💹', text:`Net margin: <strong>${margin}%</strong> (₹${fmt(netBalance)} of ₹${fmt(totalIncome)} income kept after expenses)`, color: margin>=60?C.green:margin>=30?C.gold:C.red });
     }
     return ins;
   }, [monthlyData, totalIncome, onlineTotal, totalDues, members, dowData, collectionRate, elecByRoom, netBalance, totalExpend]);
@@ -431,39 +432,6 @@ export default function Reports() {
     downloadBlob([hdrs.join(','), ...rows.map(r=>r.join(','))].join('\n'),
       `receipts-${new Date().toISOString().split('T')[0]}.csv`, 'text/csv');
   };
-
-  /* ── Restore handlers ── */
-  const handleRestoreFile = async (e) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    setRestore({ step: 'reading', preview: null, error: null, file });
-    try {
-      const text = await file.text();
-      const json = JSON.parse(text);
-      if (!json.data) throw new Error('Invalid backup file — missing "data" field. Make sure you use a Full Backup JSON file, not a CSV.');
-      // Dry run to get counts
-      setRestore(s => ({ ...s, step: 'previewing' }));
-      const res = await backupAPI.dryRunRestore(json.data);
-      setRestore({ step: 'confirm', preview: { ...res.data, backupDate: json.exportedAt, fileName: file.name, data: json.data }, error: null, file });
-    } catch(err) {
-      setRestore({ step: 'error', preview: null, error: err.response?.data?.message || err.message, file });
-    }
-  };
-
-  const handleConfirmRestore = async () => {
-    if (!restore.preview?.data) return;
-    setRestore(s => ({ ...s, step: 'restoring' }));
-    try {
-      const res = await backupAPI.restore(restore.preview.data);
-      setRestore(s => ({ ...s, step: 'done', preview: { ...s.preview, restored: res.data.restored } }));
-      // Reload data after restore
-      setTimeout(() => window.location.reload(), 2500);
-    } catch(err) {
-      setRestore(s => ({ ...s, step: 'error', error: err.response?.data?.message || err.message }));
-    }
-  };
-
-  const resetRestore = () => setRestore({ step: 'idle', preview: null, error: null, file: null });
 
   const selStyle = { background:'var(--bg3)', border:'1px solid var(--border)', borderRadius:6, padding:'7px 10px', color:'var(--text)', outline:'none', fontSize:'0.82rem' };
   const StatCard = ({ label, value, color='var(--accent)', sub, icon }) => (
@@ -523,12 +491,14 @@ export default function Reports() {
 
           {/* KPI Cards */}
           <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(165px,1fr))',gap:12}}>
-            <StatCard icon="💰" label="Total Income"      value={fmtK(totalIncome)}    color={C.green} sub={`${receipts.length} receipts`} />
-            <StatCard icon="📤" label="Total Expenditure" value={fmtK(totalExpend)}    color={C.red}   sub="Salary + Maintenance" />
-            <StatCard icon="💹" label="Net Balance"       value={fmtK(netBalance)}     color={netBalance>=0?C.green:C.red} sub={totalIncome>0?`${Math.round(netBalance/totalIncome*100)}% margin`:''} />
+            <StatCard icon="💰" label="Total Income"      value={`₹${fmtK(totalIncome)}`}    color={C.green} sub={`${receipts.length} receipts`} />
+            <StatCard icon="📤" label="Total Expenditure" value={`₹${fmtK(totalExpend)}`}    color={C.red}   sub="Salary + Maintenance" />
+            <StatCard icon="💹" label="Net Balance"       value={`₹${fmtK(netBalance)}`}     color={netBalance>=0?C.green:C.red} sub={totalIncome>0?`${Math.round(netBalance/totalIncome*100)}% margin`:''} />
             <StatCard icon="👥" label="Active Members"    value={activeMembers.length}        color={C.blue}  sub={`of ${members.length} total`} />
-            <StatCard icon="💵" label="Cash Collected"    value={fmtK(cashTotal)}      sub={totalIncome>0?`${Math.round(cashTotal/totalIncome*100)}% of income`:''} />
-            <StatCard icon="📱" label="Online Collected"  value={fmtK(onlineTotal)}    color={C.teal}  sub={totalIncome>0?`${Math.round(onlineTotal/totalIncome*100)}% of income`:''} />
+            <StatCard icon="💵" label="Cash Collected"    value={`₹${fmtK(cashTotal)}`}      sub={totalIncome>0?`${Math.round(cashTotal/totalIncome*100)}% of income`:''} />
+            <StatCard icon="📱" label="Online Collected"  value={`₹${fmtK(onlineTotal)}`}    color={C.teal}  sub={totalIncome>0?`${Math.round(onlineTotal/totalIncome*100)}% of income`:''} />
+            <StatCard icon="⚠️" label="Pending Dues"      value={`₹${fmtK(totalDues)}`}      color={totalDues>0?C.red:'var(--text3)'} sub="Part payment balances" />
+            <StatCard icon="🚔" label="Police Unverified" value={members.filter(m=>m.isActive!==false&&!m.policeFormVerified).length} color={C.orange} sub="Compliance gap" />
           </div>
 
           {/* Income vs Expenditure Composed Chart */}
@@ -1096,137 +1066,33 @@ export default function Reports() {
           EXPORT TAB
       ════════════════════════════════════════════════════════ */}
       {tab === 'export' && (
-        <div style={{display:'flex',flexDirection:'column',gap:16}}>
-
-          {/* ── CSV + JSON Export cards ── */}
-          <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(280px,1fr))',gap:14}}>
-            {[
-              { key:'members',  label:'Members',          icon:'👥', desc:'All member records — names, rooms, contacts, aadhar, dates' },
-              { key:'receipts', label:'Receipts',          icon:'🧾', desc:'All payment receipts with amounts, dates, modes' },
-              { key:'electric', label:'Electric',          icon:'⚡', desc:'Room-wise electricity readings and bills' },
-              { key:'salary',   label:'Salary & Expenses', icon:'💰', desc:'Staff salaries and maintenance records' },
-            ].map(c=>(
-              <div key={c.key} className="card" style={{display:'flex',flexDirection:'column',gap:14}}>
-                <div style={{fontSize:'2rem'}}>{c.icon}</div>
-                <div>
-                  <div style={{fontWeight:700,color:'var(--text)',fontSize:'1rem',marginBottom:4}}>{c.label}</div>
-                  <div style={{fontSize:'0.8rem',color:'var(--text3)'}}>{c.desc}</div>
-                </div>
-                <button className="btn btn-secondary" onClick={()=>exportCSV(c.key)} disabled={!!exporting} style={{marginTop:'auto'}}>
-                  {exporting===c.key?'⏳ Exporting...':'📥 Download CSV (Excel)'}
-                </button>
-              </div>
-            ))}
-            <div className="card" style={{display:'flex',flexDirection:'column',gap:14,border:'1px solid rgba(240,165,0,0.3)'}}>
-              <div style={{fontSize:'2rem'}}>💾</div>
+        <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(280px,1fr))',gap:14}}>
+          {[
+            { key:'members',  label:'Members',          icon:'👥', desc:'All member records — names, rooms, contacts, aadhar, dates' },
+            { key:'receipts', label:'Receipts',          icon:'🧾', desc:'All payment receipts with amounts, dates, modes' },
+            { key:'electric', label:'Electric',          icon:'⚡', desc:'Room-wise electricity readings and bills' },
+            { key:'salary',   label:'Salary & Expenses', icon:'💰', desc:'Staff salaries and maintenance records' },
+          ].map(c=>(
+            <div key={c.key} className="card" style={{display:'flex',flexDirection:'column',gap:14}}>
+              <div style={{fontSize:'2rem'}}>{c.icon}</div>
               <div>
-                <div style={{fontWeight:700,color:'var(--text)',fontSize:'1rem',marginBottom:4}}>Full Database Backup</div>
-                <div style={{fontSize:'0.8rem',color:'var(--text3)'}}>Complete JSON backup of all data. Use this to restore in case of data loss.</div>
+                <div style={{fontWeight:700,color:'var(--text)',fontSize:'1rem',marginBottom:4}}>{c.label}</div>
+                <div style={{fontSize:'0.8rem',color:'var(--text3)'}}>{c.desc}</div>
               </div>
-              <button className="btn btn-primary" onClick={exportJSON} disabled={!!exporting} style={{marginTop:'auto'}}>
-                {exporting==='json'?'⏳ Generating...':'💾 Download Full Backup'}
+              <button className="btn btn-secondary" onClick={()=>exportCSV(c.key)} disabled={!!exporting} style={{marginTop:'auto'}}>
+                {exporting===c.key?'⏳ Exporting...':'📥 Download CSV (Excel)'}
               </button>
             </div>
-          </div>
-
-          {/* ── Restore from Backup ── */}
-          <div className="card" style={{border:'1px solid rgba(231,76,60,0.3)'}}>
-            <div style={{marginBottom:16}}>
-              <div style={{fontFamily:'Rajdhani',fontWeight:700,fontSize:'1.05rem',color:'var(--text)',marginBottom:4}}>🔄 Restore from Backup</div>
-              <div style={{fontSize:'0.8rem',color:'var(--text3)'}}>Upload a <strong>Full Backup JSON</strong> file to restore all your data. Your current data will be replaced.</div>
+          ))}
+          <div className="card" style={{display:'flex',flexDirection:'column',gap:14,border:'1px solid rgba(240,165,0,0.3)'}}>
+            <div style={{fontSize:'2rem'}}>💾</div>
+            <div>
+              <div style={{fontWeight:700,color:'var(--text)',fontSize:'1rem',marginBottom:4}}>Full Database Backup</div>
+              <div style={{fontSize:'0.8rem',color:'var(--text3)'}}>Complete encrypted JSON backup of all data.</div>
             </div>
-
-            {/* IDLE — file picker */}
-            {restore.step === 'idle' && (
-              <div style={{display:'flex',flexDirection:'column',gap:12}}>
-                <div style={{padding:'20px',border:'2px dashed var(--border)',borderRadius:8,textAlign:'center',background:'var(--bg3)'}}>
-                  <div style={{fontSize:'2rem',marginBottom:8}}>📂</div>
-                  <div style={{fontSize:'0.85rem',color:'var(--text2)',marginBottom:12}}>Select your backup JSON file</div>
-                  <label style={{cursor:'pointer'}}>
-                    <input type="file" accept=".json" onChange={handleRestoreFile} style={{display:'none'}} />
-                    <span className="btn btn-secondary">Choose Backup File</span>
-                  </label>
-                </div>
-                <div style={{padding:'10px 14px',background:'rgba(231,76,60,0.06)',border:'1px solid rgba(231,76,60,0.2)',borderRadius:6,fontSize:'0.76rem',color:'var(--text3)'}}>
-                  ⚠️ <strong>Warning:</strong> Restoring will permanently delete all current data for this hostel and replace it with the backup. This cannot be undone.
-                </div>
-              </div>
-            )}
-
-            {/* READING / PREVIEWING */}
-            {(restore.step === 'reading' || restore.step === 'previewing') && (
-              <div style={{textAlign:'center',padding:'24px',color:'var(--text3)'}}>
-                <div style={{width:32,height:32,border:'3px solid var(--border)',borderTopColor:'var(--accent)',borderRadius:'50%',animation:'spin 0.8s linear infinite',margin:'0 auto 12px'}} />
-                {restore.step === 'reading' ? 'Reading backup file…' : 'Checking backup contents…'}
-              </div>
-            )}
-
-            {/* CONFIRM — show preview before committing */}
-            {restore.step === 'confirm' && restore.preview && (
-              <div style={{display:'flex',flexDirection:'column',gap:14}}>
-                <div style={{padding:'12px 16px',background:'rgba(52,152,219,0.08)',border:'1px solid rgba(52,152,219,0.25)',borderRadius:8}}>
-                  <div style={{fontWeight:600,color:'var(--text)',marginBottom:8,fontSize:'0.9rem'}}>📋 Backup Preview</div>
-                  <div style={{fontSize:'0.8rem',color:'var(--text3)',marginBottom:10}}>
-                    File: <strong style={{color:'var(--text2)'}}>{restore.preview.fileName}</strong>
-                    {restore.preview.backupDate && <> · Exported: <strong style={{color:'var(--text2)'}}>{new Date(restore.preview.backupDate).toLocaleString('en-IN')}</strong></>}
-                  </div>
-                  <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(130px,1fr))',gap:8}}>
-                    {[
-                      {label:'Members',          inc: restore.preview.incoming?.members,         ex: restore.preview.existing?.members},
-                      {label:'Archived Members', inc: restore.preview.incoming?.archivedMembers,  ex: restore.preview.existing?.archivedMembers},
-                      {label:'Receipts',         inc: restore.preview.incoming?.receipts,         ex: restore.preview.existing?.receipts},
-                      {label:'Electric Records', inc: restore.preview.incoming?.electric,         ex: restore.preview.existing?.electric},
-                      {label:'Salary Records',   inc: restore.preview.incoming?.salaries,         ex: restore.preview.existing?.salaries},
-                    ].map(row => (
-                      <div key={row.label} style={{background:'var(--bg3)',borderRadius:6,padding:'8px 10px'}}>
-                        <div style={{fontSize:'0.68rem',color:'var(--text3)',marginBottom:4}}>{row.label}</div>
-                        <div style={{fontSize:'0.85rem'}}><span style={{color:'var(--danger)',fontWeight:700}}>{row.ex} existing</span> → <span style={{color:'var(--success)',fontWeight:700}}>{row.inc} from backup</span></div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-                <div style={{padding:'10px 14px',background:'rgba(231,76,60,0.06)',border:'1px solid rgba(231,76,60,0.2)',borderRadius:6,fontSize:'0.76rem',color:'var(--text3)'}}>
-                  ⚠️ All {Object.values(restore.preview.existing||{}).reduce((a,b)=>a+b,0)} existing records will be deleted and replaced with {Object.values(restore.preview.incoming||{}).reduce((a,b)=>a+b,0)} records from the backup. This <strong>cannot be undone.</strong>
-                </div>
-                <div style={{display:'flex',gap:10}}>
-                  <button className="btn btn-secondary" onClick={resetRestore}>Cancel</button>
-                  <button className="btn btn-primary" style={{background:'var(--danger)',borderColor:'var(--danger)'}} onClick={handleConfirmRestore}>
-                    🔄 Yes, Restore My Data
-                  </button>
-                </div>
-              </div>
-            )}
-
-            {/* RESTORING */}
-            {restore.step === 'restoring' && (
-              <div style={{textAlign:'center',padding:'24px',color:'var(--text3)'}}>
-                <div style={{width:32,height:32,border:'3px solid var(--border)',borderTopColor:'var(--danger)',borderRadius:'50%',animation:'spin 0.8s linear infinite',margin:'0 auto 12px'}} />
-                Restoring data… do not close this page.
-              </div>
-            )}
-
-            {/* DONE */}
-            {restore.step === 'done' && restore.preview?.restored && (
-              <div style={{padding:'16px',background:'rgba(46,204,113,0.08)',border:'1px solid rgba(46,204,113,0.3)',borderRadius:8,textAlign:'center'}}>
-                <div style={{fontSize:'2rem',marginBottom:8}}>✅</div>
-                <div style={{fontWeight:700,color:'var(--success)',marginBottom:6}}>Restore Complete!</div>
-                <div style={{fontSize:'0.82rem',color:'var(--text3)',marginBottom:10}}>
-                  Restored: {restore.preview.restored.members} members · {restore.preview.restored.receipts} receipts · {restore.preview.restored.electric} electric records · {restore.preview.restored.salaries} salary records
-                </div>
-                <div style={{fontSize:'0.78rem',color:'var(--text3)'}}>Page will reload automatically…</div>
-              </div>
-            )}
-
-            {/* ERROR */}
-            {restore.step === 'error' && (
-              <div style={{display:'flex',flexDirection:'column',gap:10}}>
-                <div style={{padding:'12px 16px',background:'rgba(231,76,60,0.08)',border:'1px solid rgba(231,76,60,0.3)',borderRadius:8}}>
-                  <div style={{fontWeight:600,color:'var(--danger)',marginBottom:4}}>❌ Restore Failed</div>
-                  <div style={{fontSize:'0.82rem',color:'var(--text3)'}}>{restore.error}</div>
-                </div>
-                <button className="btn btn-secondary" onClick={resetRestore} style={{alignSelf:'flex-start'}}>Try Again</button>
-              </div>
-            )}
+            <button className="btn btn-primary" onClick={exportJSON} disabled={!!exporting} style={{marginTop:'auto'}}>
+              {exporting==='json'?'⏳ Generating...':'💾 Download Full Backup'}
+            </button>
           </div>
         </div>
       )}

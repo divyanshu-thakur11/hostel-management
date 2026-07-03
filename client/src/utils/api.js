@@ -99,13 +99,14 @@ export const receiptsAPI = {
 };
 
 export const electricAPI = {
-  getAll:      (params) => api.get('/electric', { params }),
-  getByRoom:   (n)      => api.get(`/electric/room/${n}`),
-  getLastByRoom:(n)     => api.get(`/electric/room/${n}/last`),
-  predict:     (n)      => api.get(`/electric/room/${n}/predict`),
-  create:      (data)   => api.post('/electric', data),
-  update:      (id, d)  => api.put(`/electric/${id}`, d),
-  delete:      (id)     => api.delete(`/electric/${id}`),
+  getAll:             (params) => api.get('/electric', { params }),
+  getByRoom:          (n)      => api.get(`/electric/room/${n}`),
+  getLastByRoom:      (n)      => api.get(`/electric/room/${n}/last`),
+  predict:            (n)      => api.get(`/electric/room/${n}/predict`),
+  create:             (data)   => api.post('/electric', data),
+  update:             (id, d)  => api.put(`/electric/${id}`, d),
+  updatePaymentStatus:(id, d)  => api.patch(`/electric/${id}/payment-status`, d),
+  delete:             (id)     => api.delete(`/electric/${id}`),
 };
 
 export const salaryAPI = {
@@ -130,13 +131,9 @@ export const auditAPI = {
 };
 
 export const backupAPI = {
-  trigger:        ()        => api.post('/backup/trigger'),
-  download:       ()        => api.get('/backup/export-json', { responseType: 'blob' }),
-  list:           ()        => api.get('/backup/list'),
-  exportJSON:     ()        => api.get('/backup/export-json', { responseType: 'blob' }),
-  exportCSV:      (col)     => api.get(`/backup/export-csv/${col}`, { responseType: 'blob' }),
-  dryRunRestore:  (data)    => api.post('/backup/restore', { data, dryRun: true }),
-  restore:        (data)    => api.post('/backup/restore', { data, dryRun: false }),
+  trigger:  ()  => api.post('/backup/trigger'),
+  download: ()  => api.get('/backup/export-json', { responseType: 'blob' }),
+  list:     ()  => api.get('/backup/list'),
 };
 
 export const syncAPI = {

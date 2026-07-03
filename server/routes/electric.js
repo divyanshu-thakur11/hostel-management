@@ -117,6 +117,32 @@ router.put('/:id', async (req, res, next) => {
   } catch(err) { next(err); }
 });
 
+// PATCH payment-status: mark as paid / waived / unpaid
+router.patch('/:id/payment-status', async (req, res, next) => {
+  try {
+    const { paymentStatus, waivedReason } = req.body;
+    if (!['unpaid', 'paid', 'waived'].includes(paymentStatus)) {
+      return res.status(400).json({ message: 'paymentStatus must be unpaid, paid, or waived' });
+    }
+    const update = { paymentStatus };
+    if (paymentStatus === 'waived') {
+      if (!waivedReason || !waivedReason.trim()) {
+        return res.status(400).json({ message: 'Reason is required when waiving a bill' });
+      }
+      update.waivedReason = waivedReason.trim();
+      update.waivedBy     = req.user && req.user.username ? req.user.username : 'owner';
+      update.waivedAt     = new Date();
+    } else {
+      update.waivedReason = '';
+      update.waivedBy     = '';
+      update.waivedAt     = null;
+    }
+    const updated = await Electric.findByIdAndUpdate(req.params.id, { $set: update }, { new: true });
+    if (!updated) return res.status(404).json({ message: 'Entry not found' });
+    res.json(updated);
+  } catch(err) { next(err); }
+});
+
 router.delete('/:id', async (req, res, next) => {
   try {
     await Electric.findByIdAndDelete(req.params.id);

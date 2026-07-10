@@ -126,6 +126,13 @@ export default function Members() {
     setEditing(m);
     setForm(m ? { ...m, admissionDate: m.admissionDate ? m.admissionDate.split('T')[0] : '', memberIdNumber: m.memberIdNumber || '' } : EMPTY);
     setShowModal(true);
+    if (!m) {
+      // New registration — ask the server for the next sequential, collision-free ID
+      // (server also enforces this on save, so this is purely a live preview).
+      membersAPI.getNextId().then(res => {
+        setForm(p => ({ ...p, memberIdNumber: res.data?.nextNumber || '' }));
+      }).catch(() => {});
+    }
   };
 
   const setF = (k) => (v) => setForm(p => ({ ...p, [k]: v }));
@@ -363,7 +370,13 @@ export default function Members() {
             <div className="modal-body">
               <div className="form-grid">
                 <div className="section-divider">Personal Information</div>
-                <div className="form-group"><label>Member ID Number</label><input {...F('memberIdNumber')} type="number" placeholder="e.g. 1, 2, 3" /></div>
+                <div className="form-group">
+                  <label>Member ID Number {!editing && <span style={{color:'var(--text3)',fontWeight:400}}>(auto-generated)</span>}</label>
+                  <input {...F('memberIdNumber')} type="number" placeholder={editing ? 'e.g. 1, 2, 3' : 'Generating...'}
+                    readOnly={!editing} disabled={!editing}
+                    style={!editing ? { opacity:0.75, cursor:'not-allowed' } : undefined} />
+                  {!editing && <span style={{fontSize:'0.72rem',color:'var(--text3)'}}>Assigned automatically as SS/{`${String(new Date().getFullYear()).slice(2)}-${String(new Date().getFullYear()+1).slice(2)}`}/{String(form.memberIdNumber||'…').padStart(3,'0')} — no two members can ever get the same ID.</span>}
+                </div>
                 <div className="form-group"><label>Full Name *</label><input {...F('name')} placeholder="Enter full name" /></div>
                 <MobileInput label="Mobile No." value={form.mobileNo} onChange={setF('mobileNo')} required />
                 <AadharInput value={form.aadharNumber} onChange={setF('aadharNumber')} />

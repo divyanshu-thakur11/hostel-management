@@ -73,12 +73,21 @@ exports.nextId = async (req, res, next) => {
   } catch(err) { next(err); }
 };
 
+// Computes the next sequential, collision-free memberId/memberIdNumber for a
+// hostel + registration year by looking at the highest number currently in
+// use. Combined with the unique index on Member (hostelId, registrationYear,
+// memberIdNumber), a retry loop in create() below guarantees two members can
+// never end up with the same ID even if two registrations happen at once.
+async function computeNextMemberId(hostelId, shortYear) {
+  const last = await Member.findOne({ hostelId, registrationYear: shortYear }).sort({ memberIdNumber: -1 });
+  const nextNum = (last?.memberIdNumber || 0) + 1;
+  return { memberIdNumber: nextNum, memberId: `SS/${shortYear}/${String(nextNum).padStart(3, '0')}` };
+}
+
 exports.create = async (req, res, next) => {
-  let session = null;
-  try { session = await mongoose.startSession(); session.startTransaction(); } catch(e) { session = null; }
   try {
     const hostelId = await getHostelId(req);
-    if (!hostelId) { if (session) { try { await session.abortTransaction(); } catch(e2) {} } return res.status(400).json({ message: 'No hostel assigned. Contact owner.' }); }
+    if (!hostelId) return res.status(400).json({ message: 'No hostel assigned. Contact owner.' });
 
     const { name, mobileNo, aadharNumber, fathersName, fathersMobileNo, permanentAddress, fathersOccupation, roomNumber, forceSave } = req.body;
     const errors = validate.collect([
@@ -93,7 +102,7 @@ exports.create = async (req, res, next) => {
       validate.mobile(fathersMobileNo, "Father's mobile"),
       validate.aadhar(aadharNumber),
     ]);
-    if (errors.length) { if (session) { try { await session.abortTransaction(); } catch(e2) {} } return res.status(400).json({ message: errors[0], errors }); }
+    if (errors.length) return res.status(400).json({ message: errors[0], errors });
 
     // F2: Duplicate detection (skip if forceSave=true)
     if (!forceSave) {
@@ -112,38 +121,50 @@ exports.create = async (req, res, next) => {
         const mobileMatch = mobileFirst8 && (m.mobileNo||'').replace(/\D/g,'').slice(0,8) === mobileFirst8;
         return dist <= 3 && mobileMatch;
       });
-      if (dup) {
-        if (session) { try { await session.abortTransaction(); } catch(e2) {} }
-        return res.status(409).json({ duplicate: true, existingMember: dup });
-      }
+      if (dup) return res.status(409).json({ duplicate: true, existingMember: dup });
     }
 
     if (roomNumber) {
       const hostel = await Hostel.findById(hostelId);
       const totalRooms = hostel?.totalRooms || 20;
       if (roomNumber < 1 || roomNumber > totalRooms)
-        { if (session) { try { await session.abortTransaction(); } catch(e2) {} } return res.status(400).json({ message: `Room ${roomNumber} does not exist. This hostel has ${totalRooms} rooms.` }); }
+        return res.status(400).json({ message: `Room ${roomNumber} does not exist. This hostel has ${totalRooms} rooms.` });
       const occupants  = await Member.countDocuments({ hostelId, roomNumber: parseInt(roomNumber), isActive: true });
       const roomDoc    = await Room.findOne({ hostelId, roomNumber: parseInt(roomNumber) }).catch(() => null);
       const maxCap     = roomDoc?.maxCapacity || 999;
       if (maxCap < 999 && occupants >= maxCap)
-        { if (session) { try { await session.abortTransaction(); } catch(e2) {} } return res.status(409).json({ message: `Room ${roomNumber} is full (${occupants}/${maxCap} members). Go to Rooms section to increase capacity if needed.` }); }
+        return res.status(409).json({ message: `Room ${roomNumber} is full (${occupants}/${maxCap} members). Go to Rooms section to increase capacity if needed.` });
     }
 
-    const data = { ...req.body, hostelId };
-    if (data.memberIdNumber) {
-      const year = new Date().getFullYear();
-      const shortYear = `${String(year).slice(2)}-${String(year + 1).slice(2)}`;
-      data.memberId = `SS/${shortYear}/${String(data.memberIdNumber).padStart(3, '0')}`;
-      data.registrationYear = shortYear;
+    // Member ID is always assigned by the server — sequential, per hostel +
+    // registration year, and guaranteed unique. Any memberIdNumber sent by
+    // the client is ignored on create (it can still be corrected via Edit).
+    const year = new Date().getFullYear();
+    const shortYear = `${String(year).slice(2)}-${String(year + 1).slice(2)}`;
+    const data = { ...req.body, hostelId, registrationYear: shortYear };
+    delete data.memberIdNumber;
+    delete data.memberId;
+
+    let saved = null;
+    let lastErr = null;
+    for (let attempt = 0; attempt < 5 && !saved; attempt++) {
+      const next = await computeNextMemberId(hostelId, shortYear);
+      try {
+        saved = await Member.create({ ...data, ...next });
+      } catch (e) {
+        lastErr = e;
+        // E11000 = duplicate key on our unique (hostelId, registrationYear, memberIdNumber)
+        // index — another registration grabbed this number first. Recompute and retry.
+        if (e.code === 11000) continue;
+        throw e;
+      }
     }
-    const saved = await Member.create(data);
+    if (!saved) throw lastErr || new Error('Could not assign a unique Member ID, please try again.');
+
     await audit.log({ hostelId, action: 'CREATE_MEMBER', entity: 'member', entityId: saved._id, description: `Added ${saved.name}${saved.roomNumber ? ` to Room ${saved.roomNumber}` : ''}`, user: req.user });
     await notify.create({ hostelId, type: 'new_member', title: `New member: ${saved.name}`, message: `${saved.name} added${saved.roomNumber ? ` to Room ${saved.roomNumber}` : ''}`, memberId: saved._id, memberName: saved.name, roomNumber: saved.roomNumber, priority: 'low' });
-    if (session) await session.commitTransaction();
     res.status(201).json(saved);
-  } catch(err) { if (session) { try { await session.abortTransaction(); } catch(e2) {} } next(err); }
-  finally { if (session) { try { session.endSession(); } catch(e3) {} }; }
+  } catch(err) { next(err); }
 };
 
 exports.update = async (req, res, next) => {
@@ -200,6 +221,9 @@ exports.update = async (req, res, next) => {
     res.json(updated);
   } catch(err) {
     if (session) { try { await session.abortTransaction(); } catch(e2) {} }
+    if (err && err.code === 11000) {
+      return res.status(409).json({ message: 'That Member ID Number is already used by another member this year. Choose a different number.' });
+    }
     next(err);
   } finally {
     if (session) { try { session.endSession(); } catch(e3) {} }

@@ -43,5 +43,9 @@ const memberSchema = new mongoose.Schema({
 memberSchema.index({ hostelId: 1, roomNumber: 1 });
 memberSchema.index({ hostelId: 1, mobileNo: 1 });
 memberSchema.index({ hostelId: 1, isActive: 1 });
+// Guarantees no two members in the same hostel + registration year can ever
+// share the same Member ID number, even under concurrent registrations.
+// sparse: true so legacy members without a memberIdNumber aren't affected.
+memberSchema.index({ hostelId: 1, registrationYear: 1, memberIdNumber: 1 }, { unique: true, sparse: true });
 
 module.exports = mongoose.model('Member', memberSchema);

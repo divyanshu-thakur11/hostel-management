@@ -106,13 +106,24 @@ export default function DuesAndPayments() {
 
   // ── Per-room dues: rent + electric for current month ─────────────────────
   // Build room dues: for each occupied room, calculate:
-  //   - rent due: fixed rent from room config, minus any rent already paid this month
+  //   - rent due: sum of each active member's own rent (the real, per-member
+  //     value set at registration/edit) minus any rent already paid this month
   //   - electric due: current month's electric reading bill, minus any electric paid
+  //
+  // NOTE: rent is tracked per-MEMBER (Member.rent), not per-room. The Room's
+  // own `rent` field (from the Rooms config page) is only a default template
+  // used to prefill new member forms — it's frequently left at 0 and does NOT
+  // reflect what a given member is actually being charged. Using it here was
+  // the root cause of rooms with real dues (e.g. Room 17) silently not
+  // appearing in this tab even though the member's own rent was unpaid.
   const roomDues = rooms
     .filter(r => r.memberCount > 0)
     .map(r => {
       const rNum = r.roomNumber;
-      const fixedRent = r.rent || 0;
+      const roomActiveMembers = members.filter(m => m.roomNumber === rNum && m.isActive !== false);
+      const memberRentSum = roomActiveMembers.reduce((s, m) => s + (m.rent || 0), 0);
+      // Fall back to the Room config's rent only if no member has a rent set yet.
+      const fixedRent = memberRentSum || r.rent || 0;
 
       // All receipts for this room this month
       const roomReceiptsThisMonth = receipts.filter(rec =>
@@ -166,7 +177,7 @@ export default function DuesAndPayments() {
 
       return {
         roomNumber: rNum,
-        members: r.members || [],
+        members: roomActiveMembers.length ? roomActiveMembers : (r.members || []),
         memberCount: r.memberCount,
         fixedRent,
         rentPaidThisMonth,
@@ -176,9 +187,9 @@ export default function DuesAndPayments() {
         elecDue,
         elecReading,
         totalDue: rentDue + elecDue,
-        mobileNo: (r.members || [])[0]?.mobileNo || '',
-        memberMobiles: (r.members || []).map(m => m.mobileNo).filter(Boolean),
-        memberNames: (r.members || []).map(m => m.name).join(', '),
+        mobileNo: (roomActiveMembers[0] || (r.members || [])[0])?.mobileNo || '',
+        memberMobiles: (roomActiveMembers.length ? roomActiveMembers : (r.members || [])).map(m => m.mobileNo).filter(Boolean),
+        memberNames: (roomActiveMembers.length ? roomActiveMembers : (r.members || [])).map(m => m.name).join(', '),
       };
     })
     .filter(r => r !== null && r.totalDue > 0)
@@ -218,7 +229,37 @@ export default function DuesAndPayments() {
       .sort((a, b) => b.totalDue - a.totalDue);
   })();
 
-  const sq = search.toLowerCase();
+  // ── Rooms due THIS MONTH by renewal/plan-expiry date ──────────────────────
+  // Independent of the rent-paid-this-month calculation above: this looks at
+  // each member's roomLeavingDate (their agreed plan end / renewal date) and
+  // flags every room whose renewal falls anywhere in the current calendar
+  // month — whether it's already overdue or still a few days away (e.g. the
+  // "14 days left" case). This is what makes a room like 17 show up here even
+  // when this month's rent happens to already be marked paid.
+  const dueThisMonthRooms = (() => {
+    const monthStart = new Date(curYr, curMon - 1, 1, 0, 0, 0, 0);
+    const monthEnd   = new Date(curYr, curMon, 0, 23, 59, 59, 999); // last day of this month
+    const byRoom = {};
+    members
+      .filter(m => m.isActive !== false && m.roomNumber && m.roomLeavingDate)
+      .forEach(m => {
+        const ld = new Date(m.roomLeavingDate);
+        if (ld >= monthStart && ld <= monthEnd) {
+          const rn = m.roomNumber;
+          if (!byRoom[rn]) byRoom[rn] = { roomNumber: rn, primary: m, others: [] };
+          else byRoom[rn].others.push(m);
+        }
+      });
+    return Object.values(byRoom)
+      .map(g => {
+        const elec = getElecDueForRoom(g.roomNumber);
+        const diffDays = Math.ceil((new Date(g.primary.roomLeavingDate) - today) / (1000*60*60*24));
+        return { ...g, elec, diffDays };
+      })
+      .sort((a, b) => new Date(a.primary.roomLeavingDate) - new Date(b.primary.roomLeavingDate));
+  })();
+
+
   const filterM  = (list) => !search ? list : list.filter(m =>
     (m.name||'').toLowerCase().includes(sq) ||
     String(m.roomNumber||'').includes(sq) ||
@@ -467,11 +508,83 @@ export default function DuesAndPayments() {
               </div>
             </div>
           )}
+
+          {/* Rooms due this month by renewal date — separate from the unpaid-rent table above */}
+          <div style={{marginTop:22}}>
+            <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:10}}>
+              <h3 style={{fontSize:'1rem',margin:0}}>📅 Rooms Due This Month (by Renewal Date)</h3>
+              <span style={{fontSize:'0.78rem',color:'var(--text3)'}}>{dueThisMonthRooms.length} room{dueThisMonthRooms.length!==1?'s':''}</span>
+            </div>
+            {dueThisMonthRooms.length === 0 ? (
+              <div className="empty-state" style={{padding:'20px 0'}}><div className="empty-icon">✅</div><p>No rooms renewing this month</p></div>
+            ) : (
+              <div className="card">
+                <div className="table-wrap">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Room</th><th>Primary Member</th><th>Mobile</th>
+                        <th>Renewal Date</th><th>Status</th>
+                        <th>Rent</th><th>Electric Due</th><th>Total Due</th><th>WhatsApp</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {filterR(dueThisMonthRooms.map(g => ({ ...g, memberNames: [g.primary, ...g.others].map(m=>m.name).join(', '), mobileNo: g.primary.mobileNo }))).map(g => {
+                        const totalDueM = (g.primary.rent || 0) + g.elec.elecDue;
+                        return (
+                          <React.Fragment key={g.roomNumber}>
+                            <tr style={{background:g.diffDays<0?'rgba(231,76,60,0.05)':'transparent'}}>
+                              <td>
+                                <span className="badge badge-blue">Room {g.roomNumber}</span>
+                                {g.others.length>0 && <span style={{marginLeft:5,fontSize:'0.68rem',color:'var(--text3)'}}>+{g.others.length} more</span>}
+                              </td>
+                              <td style={{fontWeight:600,color:'var(--text)'}}>{g.primary.name}</td>
+                              <td style={{fontSize:'0.82rem'}}>{g.primary.mobileNo||'—'}</td>
+                              <td style={{fontSize:'0.82rem'}}>{fmt(g.primary.roomLeavingDate)}</td>
+                              <td>
+                                <span style={{background:g.diffDays<0?'rgba(231,76,60,0.12)':g.diffDays<=3?'rgba(231,76,60,0.12)':'rgba(240,165,0,0.12)',color:g.diffDays<0||g.diffDays<=3?'var(--danger)':'var(--accent)',padding:'2px 10px',borderRadius:10,fontWeight:700,fontSize:'0.78rem'}}>
+                                  {g.diffDays<0 ? `Overdue ${Math.abs(g.diffDays)}d` : g.diffDays===0 ? 'Today' : `${g.diffDays}d left`}
+                                </span>
+                              </td>
+                              <td>{g.primary.rent?fmtM(g.primary.rent):'—'}</td>
+                              <td style={{color:g.elec.elecDue>0?'#f39c12':'var(--text3)',fontWeight:g.elec.elecDue>0?700:400}}>{g.elec.elecDue>0?fmtM(g.elec.elecDue):'—'}</td>
+                              <td style={{color:totalDueM>0?'var(--danger)':'var(--text3)',fontWeight:700}}>{totalDueM>0?fmtM(totalDueM):'—'}</td>
+                              <td>
+                                {g.primary.mobileNo && (
+                                  <button style={{background:'#25d366',color:'white',border:'none',borderRadius:5,padding:'4px 9px',cursor:'pointer',fontSize:'0.72rem',fontWeight:700}}
+                                    onClick={() => {
+                                      const msg = [
+                                        `🏠 *Hostel Renewal Reminder*`,
+                                        `Dear *${g.primary.name}*,`,
+                                        `🚪 Room No: *${g.roomNumber}*`,
+                                        `⏰ Plan ${g.diffDays<0?'expired':'expires'}: *${fmt(g.primary.roomLeavingDate)}*`,
+                                        g.primary.rent ? `🏠 Rent: ₹${(g.primary.rent||0).toLocaleString('en-IN')}` : '',
+                                        g.elec.elecDue>0 ? `⚡ Electric Due: ₹${g.elec.elecDue.toLocaleString('en-IN')}` : '',
+                                        ``, `Please renew and clear dues. Thank you 🙏`,
+                                      ].filter(Boolean).join('\n');
+                                      window.open(`https://wa.me/91${String(g.primary.mobileNo).replace(/\D/g,'').slice(-10)}?text=${encodeURIComponent(msg)}`,'_blank');
+                                    }}>📱</button>
+                                )}
+                              </td>
+                            </tr>
+                            {g.others.map(om => (
+                              <tr key={om._id} style={{background:'var(--bg3)',opacity:0.85}}>
+                                <td style={{paddingLeft:24,color:'var(--text3)',fontSize:'0.75rem'}}>↳ same room</td>
+                                <td style={{color:'var(--text2)',fontSize:'0.83rem'}}>{om.name}</td>
+                                <td colSpan={7} style={{color:'var(--text3)',fontSize:'0.75rem'}}>same renewal as above</td>
+                              </tr>
+                            ))}
+                          </React.Fragment>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+          </div>
         </div>
       )}
-
-
-      {/* ── PART PAYMENTS TAB ─────────────────────────────────────────────── */}
       {tab === 'partpay' && (
         <div className="card">
           <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:14}}>

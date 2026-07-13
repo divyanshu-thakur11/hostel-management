@@ -1,160 +1,213 @@
-const Receipt = require('../models/Receipt');
-const Hostel = require('../models/Hostel');
-const audit = require('../services/audit');
-const notify = require('../services/notifications');
-const validate = require('../utils/validate');
-const mongoose = require('mongoose');
+import axios from 'axios';
 
-const getHostelId = async (req) => {
-  if (req.user.role === 'owner') {
-    const hId = req.hostelId; // from JWT — never from client
-    if (hId) return hId;
-    const first = await Hostel.findOne({ isActive: true }).sort({ createdAt: 1 });
-    return first?._id;
+const api = axios.create({
+  baseURL: '/api',           // always relative — works on Render same-origin
+  withCredentials: true,     // send HttpOnly cookie on every request
+});
+
+// No token management needed — cookie is HttpOnly, browser handles it.
+// For hostel switching: owner sends selected hostelId as x-hostel-id header.
+// Server ignores this for managers (locked to their JWT hostelId).
+api.interceptors.request.use((config) => {
+  const hostelId = localStorage.getItem('hm_hostel_id');
+  if (hostelId) config.headers['x-hostel-id'] = hostelId;
+  return config;
+});
+
+// Handle auth errors and DB errors globally
+api.interceptors.response.use(
+  (res) => res,
+  (err) => {
+    // Bypass interceptor if the request was deliberately canceled
+    if (axios.isCancel(err)) {
+      return Promise.reject(err);
+    }
+
+    const status = err.response?.status;
+
+    if (status === 401) {
+      localStorage.removeItem('hm_user');
+      window.location.href = '/';
+    }
+    
+    // 503 = DB not connected — show user-friendly message safely
+    if (status === 503) {
+      const dbMessage = err.response?.data?.message || 'Database connection offline';
+      console.warn('Server DB not ready:', dbMessage);
+    }
+    
+    return Promise.reject(err);
   }
-  return req.user.hostelId;
+);
+
+export const authAPI = {
+  login:           (data)       => api.post('/auth/login', data),
+  logout:          ()           => api.post('/auth/logout'),
+  me:              ()           => api.get('/auth/me'),
+  changePassword:  (data)       => api.post('/auth/change-password', data),
+  getUsers:        ()           => api.get('/auth/users'),
+  createUser:      (data)       => api.post('/auth/users', data),
+  createManager:   (data)       => api.post('/auth/users', data),
+  toggleUser:      (id)         => api.put(`/auth/users/${id}/toggle`),
+  deleteUser:      (id)         => api.delete(`/auth/users/${id}`),
+  getUserActivity: (id)         => api.get(`/auth/users/${id}/activity`),
+  resetPassword:   (id, data)   => api.post(`/auth/users/${id}/reset-password`, data), 
 };
 
-exports.list = async (req, res, next) => {
-  try {
-    const hostelId = await getHostelId(req);
-    const page = Math.max(1, parseInt(req.query.page) || 1);
-    const limit = Math.min(2000, parseInt(req.query.limit) || 50);
-    const skip = (page - 1) * limit;
-    const query = hostelId ? { hostelId } : {};
-    if (req.query.room) query.roomNumber = parseInt(req.query.room);
-    if (req.query.type) query.packageName = req.query.type;
-    if (req.query.mode) query.modeOfPayment = req.query.mode;
-    if (req.query.search) {
-      query.$or = [
-        { memberName: { $regex: req.query.search, $options: 'i' } },
-        { memberMobile: { $regex: req.query.search } },
-        { billNumber: { $regex: req.query.search, $options: 'i' } },
-        { roomNumber: isNaN(parseInt(req.query.search)) ? undefined : parseInt(req.query.search) },
-      ].filter(Boolean);
-    }
-    if (req.query.from) query.receiptDate = { ...query.receiptDate, $gte: new Date(req.query.from) };
-    if (req.query.to) query.receiptDate = { ...query.receiptDate, $lte: new Date(req.query.to) };
-    const [data, total] = await Promise.all([
-      Receipt.find(query).sort({ receiptDate: -1 }).skip(skip).limit(limit).lean(),
-      Receipt.countDocuments(query),
-    ]);
-    res.json({ data, total, page, pages: Math.ceil(total / limit), limit });
-  } catch(err) { next(err); }
+export const dashboardAPI = {
+  get: (params) => api.get('/dashboard', { params }),
 };
 
-exports.nextNumbers = async (req, res, next) => {
-  try {
-    const hostelId = await getHostelId(req);
-    const query = hostelId ? { hostelId } : {};
-    const last = await Receipt.findOne(query).sort({ receiptNumber: -1 });
-    const nextNum = last ? (last.receiptNumber || 0) + 1 : 1;
-    const year = new Date().getFullYear();
-    const shortYear = `${String(year).slice(2)}-${String(year + 1).slice(2)}`;
-    const lastBill = await Receipt.findOne({ ...query, billYear: shortYear }).sort({ billSerial: -1 });
-    const nextSerial = lastBill ? (lastBill.billSerial || 0) + 1 : 1;
-    res.json({ receiptNumber: nextNum, billNumber: `SB/${shortYear}/${String(nextSerial).padStart(3, '0')}`, billYear: shortYear, billSerial: nextSerial });
-  } catch(err) { next(err); }
+export const hostelAPI = {
+  getAll:  ()           => api.get('/hostels'),
+  create:  (data)       => api.post('/hostels', data),
+  update:  (id, data)   => api.put(`/hostels/${id}`, data),
 };
 
-// Reset bill serial counter for new financial year
-exports.resetSerial = async (req, res, next) => {
-  try {
-    const hostelId = await getHostelId(req);
-    if (!hostelId) return res.status(400).json({ message: 'No hostel found' });
-    const { yearType } = req.body; // 'april' (26-27) or 'january' (26-26)
-    const now = new Date();
-    let fromYear, toYear;
-    if (yearType === 'april') {
-      // Financial year April to March: e.g. Apr 2026 → Mar 2027 = "26-27"
-      fromYear = now.getMonth() >= 3 ? now.getFullYear() : now.getFullYear() - 1;
-      toYear   = fromYear + 1;
+export const roomsAPI = {
+  getAll:     (params)    => api.get('/rooms', { params }),
+  getOne:     (n)         => api.get(`/rooms/${n}`),
+  update:     (n, data)   => api.put(`/rooms/${n}`, data),
+  updateAll:  (rooms)     => api.put('/rooms', { rooms }),
+  create:     (data)      => api.post('/rooms', data),
+  deleteRoom: (n)         => api.delete(`/rooms/${n}`),
+};
+
+export const membersAPI = {
+  getAll:          (params) => api.get('/members', { params }),
+  getById:         (id)     => api.get(`/members/${id}`),
+  getByRoom:       (n)      => api.get(`/members/room/${n}`),
+  getNextId:       ()       => api.get('/members/next-id'),
+  create:          (data)   => api.post('/members', data),
+  update:          (id, d)  => api.put(`/members/${id}`, d),
+  vacate:          (id, r)  => api.post(`/members/${id}/vacate`, { reason: r }),
+  delete:          (id)     => api.delete(`/members/${id}`),
+  getArchived:     (params) => api.get('/members/archived', { params }),
+  restoreArchived: (id)     => api.post(`/members/archived/${id}/restore`),
+  deleteArchived:  (id)     => api.delete(`/members/archived/${id}`),
+};
+
+export const receiptsAPI = {
+  getAll:         (params) => api.get('/receipts', { params }),
+  getByRoom:      (n)      => api.get(`/receipts/room/${n}`),
+  getRoomSummary: (n)      => api.get(`/receipts/room/${n}/summary`),
+  getNextNumbers: ()       => api.get('/receipts/next-numbers'),
+  resetSerial:    (yearType) => api.post('/receipts/reset-serial', { yearType }),
+  create:         (data)   => api.post('/receipts', data),
+  update:         (id, d)  => api.put(`/receipts/${id}`, d),
+  delete:         (id)     => api.delete(`/receipts/${id}`),
+  clearDue:       (id)     => api.patch(`/receipts/${id}/clear-due`), 
+};
+
+export const electricAPI = {
+  getAll:             (params) => api.get('/electric', { params }),
+  getByRoom:          (n)      => api.get(`/electric/room/${n}`),
+  getLastByRoom:      (n)      => api.get(`/electric/room/${n}/last`),
+  predict:            (n)      => api.get(`/electric/room/${n}/predict`),
+  create:             (data)   => api.post('/electric', data),
+  update:             (id, d)  => api.put(`/electric/${id}`, d),
+  updatePaymentStatus:(id, d)  => api.patch(`/electric/${id}/payment-status`, d),
+  delete:             (id)     => api.delete(`/electric/${id}`),
+};
+
+export const salaryAPI = {
+  getAll:  (params) => api.get('/salary', { params }),
+  create:  (data)   => api.post('/salary', data),
+  update:  (id, d)  => api.put(`/salary/${id}`, d),
+  delete:  (id)     => api.delete(`/salary/${id}`),
+};
+
+export const notificationsAPI = {
+  getAll:        (params) => api.get('/notifications', { params }),
+  markRead:      (id)     => api.put(`/notifications/${id}/read`),
+  markAllRead:   ()       => api.put('/notifications/read-all'),
+  getUnreadCount:()       => api.get('/notifications/unread-count'),
+  clearRead:     ()       => api.delete('/notifications/clear-read'),
+  clearAll:      ()       => api.delete('/notifications/clear-all'),
+  deleteOne:     (id)     => api.delete(`/notifications/${id}`),
+};
+
+export const auditAPI = {
+  getAll: (params) => api.get('/audit', { params }),
+};
+
+export const backupAPI = {
+  trigger:  ()  => api.post('/backup/trigger'),
+  download: ()  => api.get('/backup/export-json', { responseType: 'blob' }),
+  list:     ()  => api.get('/backup/list'),
+};
+
+export const syncAPI = {
+  sheets: () => api.post('/sync-sheets'),
+};
+
+export default api;
+
+// ── WhatsApp Messaging ────────────────────────────────────────────────────────
+export const whatsapp = {
+  sendReceipt: (mobile, receipt) => {
+    const num = `91${String(mobile).replace(/\D/g,'').replace(/^91/,'').slice(-10)}`;
+    const date = new Date(receipt.receiptDate).toLocaleDateString('en-IN', { day:'2-digit', month:'short', year:'numeric' });
+    const paidAmt = receipt.isPartPayment ? (receipt.amountPaid || 0) : (receipt.totalAmount || 0);
+    const PKGl = { rent:'Rent / किराया', advance:'Advance / एडवांस', electric:'Electric / बिजली', final:'Final Bill / अंतिम', other:'Other / अन्य' };
+    const typeLabel = PKGl[receipt.packageName] || receipt.packageName || '';
+    const modeLabel = receipt.modeOfPayment === 'online' ? 'Online / ऑनलाइन' : 'Cash / नगद';
+    const membersList = receipt.members?.length > 0 ? receipt.members.map(m=>m.name).join(', ') : (receipt.memberName || '—');
+    const lines = [
+      `🏠 *HOSTEL RECEIPT*`, `━━━━━━━━━━━━━━━━━━`,
+      `📋 Bill No: *${receipt.billNumber || receipt.receiptNumber || '—'}*`,
+      `📅 Date: ${date}`, ``,
+      `👤 Name: *${membersList}*`,
+      `🚪 Room No: *${receipt.roomNumber || '—'}*`,
+      `💳 Type: ${typeLabel}`,
+      `💵 Mode: ${modeLabel}`, ``,
+    ];
+    if (receipt.isPartPayment && (receipt.balanceDue || 0) > 0) {
+      lines.push(`📊 Total Bill: ₹${(receipt.totalAmount||0).toLocaleString('en-IN')}`);
+      lines.push(`✅ Paid Today: *₹${paidAmt.toLocaleString('en-IN')}*`);
+      if (receipt.amountInWords) lines.push(`   (${receipt.amountInWords})`);
+      lines.push(`❗ *Balance Due: ₹${(receipt.balanceDue||0).toLocaleString('en-IN')}*`);
     } else {
-      // Calendar year January to December: e.g. Jan 2026 → Dec 2026 = "26-26"
-      fromYear = now.getFullYear();
-      toYear   = fromYear;
+      lines.push(`💰 *Amount: ₹${paidAmt.toLocaleString('en-IN')}*`);
+      if (receipt.amountInWords) lines.push(`   (${receipt.amountInWords})`);
     }
-    const newYear = `${String(fromYear).slice(2)}-${String(toYear).slice(2)}`;
-    // Mark all receipts in this new year as having serial 0 so next one starts at 1
-    // We do this by simply checking — no deletion, just confirm the year string is ready
-    res.json({
-      message: `Bill numbers will now use year format: SB/${newYear}/001`,
-      newYear,
-      nextBill: `SB/${newYear}/001`,
-    });
-  } catch(err) { next(err); }
-};
-
-exports.clearDue = async (req, res, next) => {
-  try {
-    // Called after a due receipt is created — clears the balanceDue on the original part-payment receipt
-    const updated = await Receipt.findByIdAndUpdate(
-      req.params.id,
-      { $set: { balanceDue: 0 } },
-      { new: true }
-    );
-    if (!updated) return res.status(404).json({ message: 'Receipt not found' });
-    res.json(updated);
-  } catch(err) { next(err); }
-};
-
-exports.byRoom = async (req, res, next) => {
-  try {
-    const hostelId = await getHostelId(req);
-    const query = { roomNumber: parseInt(req.params.roomNumber) };
-    if (hostelId) query.hostelId = hostelId;
-    const receipts = await Receipt.find(query).sort({ receiptDate: -1 }).lean();
-    res.json(receipts);
-  } catch(err) { next(err); }
-};
-
-exports.roomSummary = async (req, res, next) => {
-  try {
-    const hostelId = await getHostelId(req);
-    const query = { roomNumber: parseInt(req.params.roomNumber) };
-    if (hostelId) query.hostelId = hostelId;
-    const receipts = await Receipt.find(query).sort({ receiptDate: -1 }).lean();
-    res.json({
-      totalPaid: receipts.reduce((s, r) => s + (r.totalAmount || 0), 0),
-      totalRent: receipts.filter(r => r.packageName === 'rent').reduce((s, r) => s + (r.totalAmount || 0), 0),
-      totalAdvance: receipts.filter(r => r.packageName === 'advance').reduce((s, r) => s + (r.totalAmount || 0), 0),
-      totalElectric: receipts.filter(r => r.packageName === 'electric').reduce((s, r) => s + (r.totalAmount || 0), 0),
-      receiptCount: receipts.length,
-      lastPayment: receipts[0] || null,
-      receipts,
-    });
-  } catch(err) { next(err); }
-};
-
-exports.create = async (req, res, next) => {
-  const session = await mongoose.startSession();
-  session.startTransaction();
-  try {
-    const hostelId = await getHostelId(req);
-    if (!hostelId) { await session.abortTransaction(); return res.status(400).json({ message: 'No hostel assigned' }); }
-    const { roomNumber, totalAmount } = req.body;
-    const errors = validate.collect([
-      validate.required(roomNumber, 'Room number'),
-      validate.required(totalAmount, 'Amount'),
-      validate.number(totalAmount, 'Amount'),
-      validate.positive(totalAmount, 'Amount'),
-      validate.positive(req.body.amountPaid, 'Amount paid'),
-    ]);
-    if (errors.length) { await session.abortTransaction(); return res.status(400).json({ message: errors[0], errors }); }
-    const [saved] = await Receipt.create([{ ...req.body, hostelId }], { session });
-    await audit.log({ hostelId, action: 'CREATE_RECEIPT', entity: 'receipt', entityId: saved._id, description: `Receipt ${saved.billNumber} Room ${roomNumber} ₹${totalAmount}`, user: req.user });
-    await notify.create({ hostelId, type: 'payment_received', title: `Payment: Room ${roomNumber}`, message: `₹${totalAmount} received (${req.body.packageName || 'payment'})`, roomNumber: parseInt(roomNumber), priority: 'low', amount: parseFloat(totalAmount) });
-    await session.commitTransaction();
-    res.status(201).json(saved);
-  } catch(err) { await session.abortTransaction(); next(err); }
-  finally { session.endSession(); }
-};
-
-exports.remove = async (req, res, next) => {
-  try {
-    const receipt = await Receipt.findByIdAndDelete(req.params.id);
-    if (!receipt) return res.status(404).json({ message: 'Receipt not found' });
-    await audit.log({ hostelId: receipt.hostelId, action: 'DELETE_RECEIPT', entity: 'receipt', entityId: receipt._id, description: `Deleted receipt ${receipt.billNumber} Room ${receipt.roomNumber}`, user: req.user });
-    res.json({ message: 'Deleted' });
-  } catch(err) { next(err); }
+    if (receipt.notes) { lines.push(``); lines.push(`📝 Notes: ${receipt.notes}`); }
+    lines.push(``); lines.push(`✅ Payment received. Thank you! 🙏`);
+    window.open(`https://wa.me/${num}?text=${encodeURIComponent(lines.join('\n'))}`, '_blank');
+  },
+  sendFinalBill: (mobile, memberName, roomNo, grandTotal, breakdown) => {
+    const num = `91${String(mobile).replace(/\D/g,'').replace(/^91/,'').slice(-10)}`;
+    const lines = [
+      `🏠 *FINAL BILLING STATEMENT*`, `━━━━━━━━━━━━━━━━━━`,
+      `👤 ${memberName}`, `🚪 Room No: ${roomNo}`, ``,
+      `📊 *Breakdown:*`,
+      breakdown.rent     ? `  Rent:     ₹${breakdown.rent}`     : '',
+      breakdown.advance  ? `  Advance:  ₹${breakdown.advance}`  : '',
+      breakdown.electric ? `  Electric: ₹${breakdown.electric}` : '',
+      breakdown.other    ? `  Other:    ₹${breakdown.other}`    : '',
+      ``, `💰 *Grand Total: ₹${grandTotal}*`, ``,
+      `Please settle all dues before vacating.`, `Thank you 🙏`,
+    ].filter(Boolean).join('\n');
+    window.open(`https://wa.me/${num}?text=${encodeURIComponent(lines)}`, '_blank');
+  },
+  sendReminder: (mobile, name, roomNo, amount, type = 'rent') => {
+    const num = `91${String(mobile).replace(/\D/g,'').replace(/^91/,'').slice(-10)}`;
+    const today = new Date().toLocaleDateString('en-IN', { day:'2-digit', month:'long', year:'numeric' });
+    const msg = [
+      `🏠 *HOSTEL PAYMENT REMINDER*`, `━━━━━━━━━━━━━━━━━━`,
+      `📅 Date: ${today}`, ``,
+      `Dear *${name}*,`, ``,
+      `This is a friendly reminder that your *${type.toUpperCase()}* payment is pending.`, ``,
+      amount ? `💰 Amount Due: *₹${Number(amount).toLocaleString('en-IN')}*` : '',
+      `🚪 Room No: *${roomNo}*`, ``,
+      `Please clear your dues at the earliest.`, ``,
+      `⚠️ Late payment attracts a fine of ₹50/- per day.`, ``,
+      `Thank you 🙏`, `— Hostel Management`,
+    ].filter(Boolean).join('\n');
+    window.open(`https://wa.me/${num}?text=${encodeURIComponent(msg)}`, '_blank');
+  },
+  sendCustom: (mobile, message) => {
+    const num = `91${String(mobile).replace(/\D/g,'').replace(/^91/,'').slice(-10)}`;
+    window.open(`https://wa.me/${num}?text=${encodeURIComponent(message)}`, '_blank');
+  },
 };

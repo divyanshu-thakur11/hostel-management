@@ -1,6 +1,6 @@
 import { useHostel } from '../context/HostelContext';
 import React, { useEffect, useState } from 'react';
-import { electricAPI } from '../utils/api';
+import { electricAPI, receiptsAPI } from '../utils/api';
 import { useToast } from '../context/ToastContext';
 
 const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
@@ -8,6 +8,7 @@ const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov
 // Payment status badge
 const StatusBadge = ({ status, waivedReason }) => {
   if (status === 'paid')   return <span style={{background:'rgba(46,204,113,0.15)',color:'#27ae60',padding:'2px 9px',borderRadius:10,fontSize:'0.72rem',fontWeight:700}}>✅ Paid</span>;
+  if (status === 'partial')return <span style={{background:'rgba(243,156,18,0.15)',color:'#f39c12',padding:'2px 9px',borderRadius:10,fontSize:'0.72rem',fontWeight:700}}>◐ Part Paid</span>;
   if (status === 'waived') return (
     <span title={`Waived: ${waivedReason}`} style={{background:'rgba(155,89,182,0.15)',color:'#8e44ad',padding:'2px 9px',borderRadius:10,fontSize:'0.72rem',fontWeight:700,cursor:'help'}}>
       🚫 Waived
@@ -30,6 +31,7 @@ export default function Electric() {
   const [waiveMode,    setWaiveMode]    = useState('');   // 'waive' | 'confirm_paid' | 'confirm_unpaid'
   const [waiveReason,  setWaiveReason]  = useState('');
   const [waiveSaving,  setWaiveSaving]  = useState(false);
+  const [receipts,     setReceipts]     = useState([]);
 
   const toast = useToast();
 
@@ -38,7 +40,34 @@ export default function Electric() {
   useEffect(() => {
     load();
     electricAPI.predict?.(selectedRoom).then(r => setPrediction(r.data)).catch(() => setPrediction(null));
+    receiptsAPI.getByRoom(selectedRoom).then(r => setReceipts(Array.isArray(r.data) ? r.data : (r.data?.data || []))).catch(() => setReceipts([]));
   }, [selectedRoom, hostelSwitchCount]);
+
+  // How much has actually been paid toward a given month's electric bill —
+  // via a direct 'electric' receipt, or the electric portion of a 'final' bill.
+  const getPaidForReading = (reading) => {
+    if (reading.paymentStatus === 'waived') return 0;
+    const direct = receipts
+      .filter(rec => (rec.packageName === 'electric' || rec.paymentType === 'electric') &&
+        rec.receiptDate && new Date(rec.receiptDate).getMonth() + 1 === reading.month && new Date(rec.receiptDate).getFullYear() === reading.year)
+      .reduce((s, rec) => s + (rec.amountPaid ?? rec.totalAmount ?? 0), 0);
+    const inFinal = receipts
+      .filter(rec => (rec.packageName === 'final' || rec.paymentType === 'final') &&
+        rec.receiptDate && new Date(rec.receiptDate).getMonth() + 1 === reading.month && new Date(rec.receiptDate).getFullYear() === reading.year)
+      .reduce((s, rec) => s + (rec.electricAmount > 0 ? rec.electricAmount : 0), 0);
+    return direct + inFinal;
+  };
+
+  // Effective status is derived automatically from receipts — 'waived' is the
+  // only manual override (set from here or from Dues & Payments).
+  const getEffectiveStatus = (reading) => {
+    if (reading.paymentStatus === 'waived') return 'waived';
+    const paid = getPaidForReading(reading);
+    const total = reading.totalAmount || 0;
+    if (total > 0 && paid >= total) return 'paid';
+    if (paid > 0) return 'partial';
+    return 'unpaid';
+  };
 
   const openModal = async () => {
     const now = new Date();
@@ -85,17 +114,11 @@ export default function Electric() {
     setWaiveSaving(true);
     try {
       const payload = waiveMode === 'waive'
-        ? { paymentStatus: 'waived',  waivedReason: waiveReason.trim() }
-        : waiveMode === 'confirm_paid'
-          ? { paymentStatus: 'paid',   waivedReason: '' }
-          : { paymentStatus: 'unpaid', waivedReason: '' };
+        ? { paymentStatus: 'waived', waivedReason: waiveReason.trim() }
+        : { paymentStatus: 'unpaid', waivedReason: '' }; // restore — status then re-derives automatically from receipts
 
       await electricAPI.updatePaymentStatus(waiveTarget._id, payload);
-      toast(
-        waiveMode === 'waive'         ? 'Bill waived — removed from dues'
-        : waiveMode === 'confirm_paid' ? 'Marked as paid'
-        :                               'Marked as unpaid'
-      );
+      toast(waiveMode === 'waive' ? 'Bill waived — removed from dues' : 'Restored — status now follows receipts automatically');
       closeWaiveModal();
       load();
     } catch(e) {
@@ -106,10 +129,10 @@ export default function Electric() {
   const units = form.endReading && form.startReading ? Number(form.endReading) - Number(form.startReading) : 0;
   const total = units * (form.ratePerUnit || 8);
 
-  // Summary stats — exclude waived from total
+  // Summary stats — exclude waived from total; status is auto-derived from receipts
   const activeReadings = readings.filter(r => r.paymentStatus !== 'waived');
-  const unpaidReadings = readings.filter(r => r.paymentStatus === 'unpaid');
-  const totalUnpaid    = unpaidReadings.reduce((s, r) => s + (r.totalAmount || 0), 0);
+  const unpaidReadings = readings.filter(r => getEffectiveStatus(r) === 'unpaid' || getEffectiveStatus(r) === 'partial');
+  const totalUnpaid    = unpaidReadings.reduce((s, r) => s + Math.max(0, (r.totalAmount || 0) - getPaidForReading(r)), 0);
 
   return (
     <div>
@@ -157,7 +180,7 @@ export default function Electric() {
       <div className="card">
         <h3 style={{fontFamily:'Rajdhani',marginBottom:4}}>Room {selectedRoom} — Reading History</h3>
         <p style={{fontSize:'0.78rem',color:'var(--text3)',marginBottom:16}}>
-          Mark unpaid bills as <strong>Paid</strong> when collected, or <strong>Waive</strong> them with a reason to remove from dues without counting as income.
+          Paid / Unpaid is worked out automatically from receipts you create. Use <strong>Waive</strong> to write off a bill without counting it as income (reason required).
         </p>
         <div className="table-wrap">
           <table>
@@ -176,8 +199,10 @@ export default function Electric() {
             <tbody>
               {readings.length === 0 ? (
                 <tr><td colSpan={8}><div className="empty-state"><div className="empty-icon">⚡</div><p>No readings for Room {selectedRoom}</p></div></td></tr>
-              ) : readings.map((r, i) => (
-                <tr key={r._id} style={r.paymentStatus === 'waived' ? {opacity:0.6} : {}}>
+              ) : readings.map((r, i) => {
+                const effStatus = getEffectiveStatus(r);
+                return (
+                <tr key={r._id} style={effStatus === 'waived' ? {opacity:0.6} : {}}>
                   <td style={{fontWeight:500,color:'var(--text)'}}>
                     {MONTHS[r.month-1]} {r.year}
                     {i === 0 && <span className="badge badge-green" style={{marginLeft:6,fontSize:'0.65rem'}}>Latest</span>}
@@ -195,54 +220,43 @@ export default function Electric() {
                   </td>
                   <td>₹{r.ratePerUnit}/unit</td>
                   <td style={{
-                    color: r.paymentStatus === 'waived' ? 'var(--text3)' : r.paymentStatus === 'paid' ? 'var(--success)' : 'var(--danger)',
+                    color: effStatus === 'waived' ? 'var(--text3)' : effStatus === 'paid' ? 'var(--success)' : 'var(--danger)',
                     fontWeight:700,
                     fontSize:'1rem',
-                    textDecoration: r.paymentStatus === 'waived' ? 'line-through' : 'none'
+                    textDecoration: effStatus === 'waived' ? 'line-through' : 'none'
                   }}>
                     ₹{r.totalAmount}
                   </td>
                   <td>
-                    <StatusBadge status={r.paymentStatus} waivedReason={r.waivedReason} />
-                    {r.paymentStatus === 'waived' && r.waivedReason && (
+                    <StatusBadge status={effStatus} waivedReason={r.waivedReason} />
+                    {effStatus === 'waived' && r.waivedReason && (
                       <div style={{fontSize:'0.68rem',color:'var(--text3)',marginTop:3,maxWidth:140}}>"{r.waivedReason}"</div>
+                    )}
+                    {effStatus === 'partial' && (
+                      <div style={{fontSize:'0.68rem',color:'var(--text3)',marginTop:3}}>₹{getPaidForReading(r).toLocaleString('en-IN')} of ₹{r.totalAmount}</div>
                     )}
                   </td>
                   <td>
                     <div style={{display:'flex',gap:5,flexWrap:'wrap'}}>
-                      {r.paymentStatus === 'unpaid' && (
-                        <>
-                          <button
-                            className="btn btn-xs"
-                            style={{background:'rgba(46,204,113,0.15)',color:'#27ae60',border:'1px solid rgba(46,204,113,0.3)',fontSize:'0.72rem'}}
-                            onClick={() => openWaiveModal(r, 'confirm_paid')}
-                          >✅ Mark Paid</button>
-                          <button
-                            className="btn btn-xs"
-                            style={{background:'rgba(155,89,182,0.12)',color:'#8e44ad',border:'1px solid rgba(155,89,182,0.3)',fontSize:'0.72rem'}}
-                            onClick={() => openWaiveModal(r, 'waive')}
-                          >🚫 Waive</button>
-                        </>
+                      {effStatus !== 'waived' && (
+                        <button
+                          className="btn btn-xs"
+                          style={{background:'rgba(155,89,182,0.12)',color:'#8e44ad',border:'1px solid rgba(155,89,182,0.3)',fontSize:'0.72rem'}}
+                          onClick={() => openWaiveModal(r, 'waive')}
+                        >🚫 Waive</button>
                       )}
-                      {r.paymentStatus === 'paid' && (
+                      {effStatus === 'waived' && (
                         <button
                           className="btn btn-xs btn-secondary"
                           style={{fontSize:'0.72rem'}}
-                          onClick={() => openWaiveModal(r, 'confirm_unpaid')}
-                        >↩ Mark Unpaid</button>
-                      )}
-                      {r.paymentStatus === 'waived' && (
-                        <button
-                          className="btn btn-xs btn-secondary"
-                          style={{fontSize:'0.72rem'}}
-                          onClick={() => openWaiveModal(r, 'confirm_unpaid')}
+                          onClick={() => openWaiveModal(r, 'restore')}
                         >↩ Restore</button>
                       )}
                       <button className="btn btn-danger btn-xs" onClick={() => del(r._id)} style={{fontSize:'0.72rem'}}>🗑</button>
                     </div>
                   </td>
                 </tr>
-              ))}
+              );})}
             </tbody>
           </table>
         </div>
@@ -307,9 +321,7 @@ export default function Electric() {
           <div className="modal" style={{maxWidth:420}}>
             <div className="modal-header">
               <h3>
-                {waiveMode === 'waive'          ? '🚫 Waive Electric Bill'
-                : waiveMode === 'confirm_paid'   ? '✅ Confirm Payment'
-                :                                  '↩ Mark as Unpaid'}
+                {waiveMode === 'waive' ? '🚫 Waive Electric Bill' : '↩ Restore Bill'}
               </h3>
               <button className="close-btn" onClick={closeWaiveModal}>✕</button>
             </div>
@@ -340,15 +352,9 @@ export default function Electric() {
                 </>
               )}
 
-              {waiveMode === 'confirm_paid' && (
-                <div style={{background:'rgba(46,204,113,0.08)',border:'1px solid rgba(46,204,113,0.25)',borderRadius:6,padding:'10px 14px',fontSize:'0.82rem',color:'var(--text2)'}}>
-                  Mark this bill as <strong>paid</strong>. It will be removed from dues. Make sure you have also created a receipt for this payment in the Receipts page for full records.
-                </div>
-              )}
-
-              {waiveMode === 'confirm_unpaid' && (
+              {waiveMode === 'restore' && (
                 <div style={{background:'rgba(231,76,60,0.07)',border:'1px solid rgba(231,76,60,0.25)',borderRadius:6,padding:'10px 14px',fontSize:'0.82rem',color:'var(--text2)'}}>
-                  This will restore the bill to <strong>unpaid</strong> status and it will appear in dues again.
+                  This removes the waiver. The bill's status will then be worked out automatically from receipts — <strong>Paid</strong> if fully covered, <strong>Unpaid</strong> otherwise.
                 </div>
               )}
             </div>
@@ -361,9 +367,8 @@ export default function Electric() {
                 disabled={waiveSaving || (waiveMode === 'waive' && !waiveReason.trim())}
               >
                 {waiveSaving ? '⏳ Saving…'
-                : waiveMode === 'waive'         ? '🚫 Confirm Waive'
-                : waiveMode === 'confirm_paid'  ? '✅ Confirm Paid'
-                :                                 '↩ Mark Unpaid'}
+                : waiveMode === 'waive' ? '🚫 Confirm Waive'
+                :                         '↩ Confirm Restore'}
               </button>
             </div>
           </div>

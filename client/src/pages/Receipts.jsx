@@ -38,6 +38,10 @@ export default function Receipts() {
   const [roomMembers, setRoomMembers] = useState([]);
   const [roomConfig, setRoomConfig] = useState(null);
   const [showModal, setShowModal]   = useState(false);
+  const [editingReceipt, setEditingReceipt] = useState(null);
+  const [historyRoom, setHistoryRoom] = useState(null);
+  const [historyData, setHistoryData] = useState([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
   const [showPrint, setShowPrint]   = useState(null);
   const [form, setForm]             = useState(EMPTY);
   const [dueModal, setDueModal]     = useState(null);
@@ -239,6 +243,15 @@ export default function Receipts() {
     };
 
     try {
+      if (editingReceipt) {
+        const res = await receiptsAPI.update(editingReceipt._id, payload);
+        toast(`Receipt updated${form.isPartPayment ? ` · Balance: ₹${balanceDue}` : ''}`);
+        setShowModal(false);
+        setEditingReceipt(null);
+        loadReceipts(page);
+        setShowPrint(res.data);
+        return;
+      }
       const res = await receiptsAPI.create(payload);
       // Auto-update roomLeavingDate for members if toDate given
       if (form.toDate) {
@@ -250,7 +263,7 @@ export default function Receipts() {
       loadReceipts(page);
       setShowPrint(res.data);
     } catch(e) {
-      toast(e.response?.data?.message || 'Error creating receipt', 'error');
+      toast(e.response?.data?.message || 'Error saving receipt', 'error');
     }
   };
 
@@ -303,8 +316,55 @@ export default function Receipts() {
       const nums = await receiptsAPI.getNextNumbers();
       setForm({ ...EMPTY, ...nums.data, receiptDate: new Date().toISOString().split('T')[0] });
     } catch { setForm({ ...EMPTY }); }
+    setEditingReceipt(null);
     setRoomMembers([]); setRoomConfig(null);
     setShowModal(true);
+  };
+
+  // Open the same modal pre-filled for editing an existing receipt.
+  const openEditModal = async (r) => {
+    setEditingReceipt(r);
+    const rm = members.filter(m => String(m.roomNumber) === String(r.roomNumber) && m.isActive !== false);
+    setRoomMembers(rm);
+    try {
+      const rc = await roomsAPI.getOne(r.roomNumber);
+      setRoomConfig(rc.data);
+    } catch { setRoomConfig(null); }
+    setForm({
+      receiptNumber: r.receiptNumber || '',
+      billNumber: r.billNumber || '',
+      billYear: r.billYear || '',
+      billSerial: r.billSerial || '',
+      roomNumber: r.roomNumber || '',
+      memberMode: (r.members && r.members.length > 1) ? 'all' : 'single',
+      memberName: r.memberName || '',
+      memberMobile: r.memberMobile || '',
+      memberId: r.memberId || '',
+      packageName: r.packageName || 'rent',
+      fromDate: r.fromDate ? r.fromDate.split('T')[0] : '',
+      toDate: r.toDate ? r.toDate.split('T')[0] : '',
+      billingMonth: r.monthYear || '',
+      totalAmount: String(r.totalAmount ?? ''),
+      amountPaid: String(r.amountPaid ?? ''),
+      balanceDue: String(r.balanceDue ?? '0'),
+      isPartPayment: !!r.isPartPayment,
+      electricAmount: r.electricAmount || 0,
+      modeOfPayment: r.modeOfPayment || 'cash',
+      notes: r.notes || '',
+      receiptDate: r.receiptDate ? r.receiptDate.split('T')[0] : new Date().toISOString().split('T')[0],
+    });
+    setShowModal(true);
+  };
+
+  // Full receipt history for one room — bill details + validity, most recent first.
+  const openRoomHistory = async (roomNumber) => {
+    setHistoryRoom(roomNumber);
+    setHistoryLoading(true);
+    try {
+      const res = await receiptsAPI.getByRoom(roomNumber);
+      setHistoryData(Array.isArray(res.data) ? res.data : (res.data?.data || []));
+    } catch { setHistoryData([]); }
+    finally { setHistoryLoading(false); }
   };
 
   const doPrint = () => {
@@ -412,11 +472,11 @@ export default function Receipts() {
             <div className="table-wrap">
               <table>
                 <thead>
-                  <tr><th>#</th><th>Bill No.</th><th>Date</th><th>Room</th><th>Members</th><th>Type</th><th>Total</th><th>Paid</th><th>Balance</th><th>Mode</th><th>Actions</th></tr>
+                  <tr><th>#</th><th>Bill No.</th><th>Date</th><th>Room</th><th>Members</th><th>Type</th><th>Validity</th><th>Total</th><th>Paid</th><th>Balance</th><th>Mode</th><th>Actions</th></tr>
                 </thead>
                 <tbody>
                   {receipts.length === 0 ? (
-                    <tr><td colSpan={11}><div className="empty-state"><div className="empty-icon">🧾</div><p>No receipts found</p></div></td></tr>
+                    <tr><td colSpan={12}><div className="empty-state"><div className="empty-icon">🧾</div><p>No receipts found</p></div></td></tr>
                   ) : receipts.map((r,i)=>(
                     <tr key={r._id}>
                       <td style={{color:'var(--text3)',fontSize:'0.75rem'}}>#{r.receiptNumber||i+1}</td>
@@ -425,6 +485,11 @@ export default function Receipts() {
                       <td><span className="badge badge-blue">R{r.roomNumber}</span></td>
                       <td style={{fontSize:'0.78rem',color:'var(--text2)',maxWidth:120,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}} title={r.memberName}>{r.memberName||'—'}</td>
                       <td><span className="badge badge-yellow" style={{fontSize:'0.68rem'}}>{PKG[r.packageName]||r.packageName}</span></td>
+                      <td style={{fontSize:'0.74rem',color:'var(--text3)',whiteSpace:'nowrap'}}>
+                        {r.fromDate||r.toDate
+                          ? <>{r.fromDate?new Date(r.fromDate).toLocaleDateString('en-IN',{day:'2-digit',month:'short'}):'?'} → {r.toDate?new Date(r.toDate).toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'2-digit'}):'?'}</>
+                          : '—'}
+                      </td>
                       <td style={{fontWeight:600}}>₹{(r.totalAmount||0).toLocaleString('en-IN')}</td>
                       <td style={{color:'var(--success)',fontWeight:600}}>₹{(r.amountPaid||r.totalAmount||0).toLocaleString('en-IN')}</td>
                       <td style={{color:(r.balanceDue||0)>0?'var(--danger)':'var(--text3)',fontWeight:(r.balanceDue||0)>0?700:400,fontSize:'0.8rem'}}>
@@ -434,6 +499,8 @@ export default function Receipts() {
                       <td>
                         <div style={{display:'flex',gap:4,flexWrap:'wrap'}}>
                           <button className="btn btn-success btn-xs" onClick={()=>setShowPrint(r)}>🖨</button>
+                          <button className="btn btn-secondary btn-xs" onClick={()=>openEditModal(r)} title="Edit receipt">✏️</button>
+                          <button className="btn btn-secondary btn-xs" onClick={()=>openRoomHistory(r.roomNumber)} title="Full receipt history for this room">🏠 History</button>
                           {(r.memberMobile||roomMembers[0]?.mobileNo) && (
                             <button className="btn btn-xs" style={{background:'#25d366',color:'white',border:'none'}}
                               onClick={()=>whatsapp.sendReceipt(r.memberMobile||'',r)} title="WhatsApp">📱</button>
@@ -467,9 +534,9 @@ export default function Receipts() {
 
       {/* ── New Receipt Modal ─────────────────────────────────────────────── */}
       {showModal && (
-        <div className="modal-overlay" onClick={e=>e.target===e.currentTarget&&setShowModal(false)}>
+        <div className="modal-overlay" onClick={e=>e.target===e.currentTarget&&(setShowModal(false),setEditingReceipt(null))}>
           <div className="modal" style={{maxWidth:600}}>
-            <div className="modal-header"><h3>Generate Room Receipt</h3><button className="close-btn" onClick={()=>setShowModal(false)}>✕</button></div>
+            <div className="modal-header"><h3>{editingReceipt ? `Edit Receipt — ${editingReceipt.billNumber||''}` : 'Generate Room Receipt'}</h3><button className="close-btn" onClick={()=>{setShowModal(false);setEditingReceipt(null);}}>✕</button></div>
             <div className="modal-body">
               <div className="form-grid">
 
@@ -612,9 +679,56 @@ export default function Receipts() {
               </div>
             </div>
             <div className="modal-footer">
-              <button className="btn btn-secondary" onClick={()=>setShowModal(false)}>Cancel</button>
-              <button className="btn btn-primary" onClick={save}>Generate Receipt</button>
+              <button className="btn btn-secondary" onClick={()=>{setShowModal(false);setEditingReceipt(null);}}>Cancel</button>
+              <button className="btn btn-primary" onClick={save}>{editingReceipt ? 'Update Receipt' : 'Generate Receipt'}</button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Room Receipt History Modal ────────────────────────────────────── */}
+      {historyRoom && (
+        <div className="modal-overlay" onClick={e=>e.target===e.currentTarget&&setHistoryRoom(null)}>
+          <div className="modal" style={{maxWidth:820}}>
+            <div className="modal-header">
+              <h3>🏠 Room {historyRoom} — Full Receipt History</h3>
+              <button className="close-btn" onClick={()=>setHistoryRoom(null)}>✕</button>
+            </div>
+            <div className="modal-body">
+              {historyLoading ? (
+                <div style={{textAlign:'center',padding:24,color:'var(--text3)'}}>⏳ Loading...</div>
+              ) : historyData.length === 0 ? (
+                <div className="empty-state"><div className="empty-icon">🧾</div><p>No receipts for this room yet</p></div>
+              ) : (
+                <div className="table-wrap">
+                  <table>
+                    <thead>
+                      <tr><th>Bill No.</th><th>Date</th><th>Members</th><th>Type</th><th>Validity</th><th>Total</th><th>Paid</th><th>Balance</th><th>Mode</th></tr>
+                    </thead>
+                    <tbody>
+                      {historyData.map(r => (
+                        <tr key={r._id}>
+                          <td style={{fontFamily:'monospace',fontSize:'0.75rem',color:'var(--accent)'}}>{r.billNumber||'—'}</td>
+                          <td style={{fontSize:'0.8rem'}}>{r.receiptDate?new Date(r.receiptDate).toLocaleDateString('en-IN'):'—'}</td>
+                          <td style={{fontSize:'0.78rem',maxWidth:120,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}} title={r.memberName}>{r.memberName||'—'}</td>
+                          <td><span className="badge badge-yellow" style={{fontSize:'0.68rem'}}>{PKG[r.packageName]||r.packageName}</span></td>
+                          <td style={{fontSize:'0.74rem',color:'var(--text3)',whiteSpace:'nowrap'}}>
+                            {r.fromDate||r.toDate
+                              ? <>{r.fromDate?new Date(r.fromDate).toLocaleDateString('en-IN',{day:'2-digit',month:'short'}):'?'} → {r.toDate?new Date(r.toDate).toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'2-digit'}):'?'}</>
+                              : '—'}
+                          </td>
+                          <td style={{fontWeight:600}}>₹{(r.totalAmount||0).toLocaleString('en-IN')}</td>
+                          <td style={{color:'var(--success)',fontWeight:600}}>₹{(r.amountPaid||r.totalAmount||0).toLocaleString('en-IN')}</td>
+                          <td style={{color:(r.balanceDue||0)>0?'var(--danger)':'var(--text3)',fontWeight:(r.balanceDue||0)>0?700:400}}>{(r.balanceDue||0)>0?`₹${r.balanceDue.toLocaleString('en-IN')}`:'—'}</td>
+                          <td><span className={`badge ${r.modeOfPayment==='online'?'badge-blue':'badge-green'}`} style={{fontSize:'0.68rem'}}>{r.modeOfPayment||'cash'}</span></td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+            <div className="modal-footer"><button className="btn btn-secondary" onClick={()=>setHistoryRoom(null)}>Close</button></div>
           </div>
         </div>
       )}

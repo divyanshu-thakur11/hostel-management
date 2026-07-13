@@ -94,6 +94,7 @@ export const receiptsAPI = {
   getNextNumbers: ()       => api.get('/receipts/next-numbers'),
   resetSerial:    (yearType) => api.post('/receipts/reset-serial', { yearType }),
   create:         (data)   => api.post('/receipts', data),
+  update:         (id, d)  => api.put(`/receipts/${id}`, d),
   delete:         (id)     => api.delete(`/receipts/${id}`),
   clearDue:       (id)     => api.patch(`/receipts/${id}/clear-due`), 
 };

@@ -7,6 +7,23 @@ const fmt   = (d) => d ? new Date(d).toLocaleDateString('en-IN', { day:'2-digit'
 const fmtM  = (n) => `₹${(n||0).toLocaleString('en-IN')}`;
 const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 
+// Small colored dot + label showing a room's electric bill status for the current month.
+function StatusDot({ status }) {
+  const map = {
+    paid:    { color: '#27ae60', label: 'Paid' },
+    partial: { color: '#f39c12', label: 'Part Paid' },
+    unpaid:  { color: '#c0392b', label: 'Unpaid' },
+    waived:  { color: '#8e44ad', label: 'Waived' },
+  };
+  const s = map[status] || map.unpaid;
+  return (
+    <span title={s.label} style={{display:'inline-flex',alignItems:'center',gap:3,fontSize:'0.65rem',color:s.color,fontWeight:700}}>
+      <span style={{width:7,height:7,borderRadius:'50%',background:s.color,display:'inline-block'}} />
+      {s.label}
+    </span>
+  );
+}
+
 export default function DuesAndPayments() {
   const { hostelSwitchCount } = useHostel();
   const [tab, setTab]         = useState('dues');
@@ -17,6 +34,14 @@ export default function DuesAndPayments() {
   const [loading, setLoading] = useState(true);
   const [search, setSearch]   = useState('');
   const toast = useToast();
+
+  // Electric waive modal (moved here from the Electric page — waive right from the dues row)
+  const [waiveTarget, setWaiveTarget] = useState(null); // the electric reading being waived
+  const [waiveReason, setWaiveReason] = useState('');
+  const [waiveSaving, setWaiveSaving] = useState(false);
+
+  // Full electric history modal for a room
+  const [elecHistoryRoom, setElecHistoryRoom] = useState(null);
 
   const load = useCallback(() => {
     setLoading(true);
@@ -40,6 +65,7 @@ export default function DuesAndPayments() {
   const now    = today;
   const curMon = now.getMonth() + 1;
   const curYr  = now.getFullYear();
+  const monthEndDay = new Date(curYr, curMon, 0).getDate(); // 30 or 31 (or 28/29 for Feb)
 
   // ── Print helper ──────────────────────────────────────────────────────────
   const doPrint = (title, html) => {
@@ -199,67 +225,101 @@ export default function DuesAndPayments() {
   const totalElecDue  = roomDues.reduce((s, r) => s + r.elecDue, 0);
   const totalDueAll   = totalRentDue + totalElecDue;
 
-  // ── dueDateRooms: strictly rooms with dues as of TODAY ───────────────────
-  // Only rooms where totalDue > 0. Grouped by room with primary + others.
-  // daysDue = days since the start of current billing month (1st of curMon).
-  const dueDateRooms = (() => {
-    const billingStart = new Date(curYr, curMon - 1, 1); // 1st of this month
-    const daysDue = Math.floor((today - billingStart) / (1000 * 60 * 60 * 24));
-
-    return roomDues
-      .filter(r => r.totalDue > 0)
-      .map(r => {
-        // Part-payment balance due for this room
-        const partDue = receipts
-          .filter(rec => rec.roomNumber === r.roomNumber && rec.isPartPayment && (rec.balanceDue || 0) > 0)
-          .reduce((s, rec) => s + (rec.balanceDue || 0), 0);
-
-        const allMembers = r.members || [];
-        const [primary, ...others] = allMembers.length > 0 ? allMembers : [{ name: 'Unknown', mobileNo: '' }];
-        return {
-          ...r,
-          partDue,
-          totalDue: r.rentDue + r.elecDue + partDue,
-          daysDue: Math.max(1, daysDue),
-          primary,
-          others,
-          memberNames: allMembers.map(m => m.name).join(', '),
-        };
-      })
-      .sort((a, b) => b.totalDue - a.totalDue);
-  })();
-
-  // ── Rooms due THIS MONTH by renewal/plan-expiry date ──────────────────────
-  // Independent of the rent-paid-this-month calculation above: this looks at
-  // each member's roomLeavingDate (their agreed plan end / renewal date) and
-  // flags every room whose renewal falls anywhere in the current calendar
-  // month — whether it's already overdue or still a few days away (e.g. the
-  // "14 days left" case). This is what makes a room like 17 show up here even
-  // when this month's rent happens to already be marked paid.
-  const dueThisMonthRooms = (() => {
+  // ── Rooms due THIS MONTH — one unified, room-ordered view ────────────────
+  // Combines two signals, sorted by room number ascending (Room 1, then Room 3, ...):
+  //   1) rooms with unpaid rent and/or electric for the current month — receipt-aware
+  //      via roomDues above, so it auto-clears as rent/electric/final receipts are made
+  //      (a part payment leaves the remainder; a full payment clears it to zero).
+  //   2) rooms whose stay validity end date (renewal/plan expiry) falls anywhere in the
+  //      current calendar month (1st through the last day), whether overdue or upcoming.
+  // Each row also carries the member's start–end validity dates for that room.
+  const roomsDueThisMonth = (() => {
     const monthStart = new Date(curYr, curMon - 1, 1, 0, 0, 0, 0);
-    const monthEnd   = new Date(curYr, curMon, 0, 23, 59, 59, 999); // last day of this month
-    const byRoom = {};
+    const monthEnd   = new Date(curYr, curMon, 0, 23, 59, 59, 999); // last day of this month (30/31)
+
+    const roomNumbers = new Set();
+    roomDues.forEach(r => { if (r.totalDue > 0) roomNumbers.add(r.roomNumber); });
     members
       .filter(m => m.isActive !== false && m.roomNumber && m.roomLeavingDate)
       .forEach(m => {
         const ld = new Date(m.roomLeavingDate);
-        if (ld >= monthStart && ld <= monthEnd) {
-          const rn = m.roomNumber;
-          if (!byRoom[rn]) byRoom[rn] = { roomNumber: rn, primary: m, others: [] };
-          else byRoom[rn].others.push(m);
-        }
+        if (ld >= monthStart && ld <= monthEnd) roomNumbers.add(m.roomNumber);
       });
-    return Object.values(byRoom)
-      .map(g => {
-        const elec = getElecDueForRoom(g.roomNumber);
-        const diffDays = Math.ceil((new Date(g.primary.roomLeavingDate) - today) / (1000*60*60*24));
-        return { ...g, elec, diffDays };
-      })
-      .sort((a, b) => new Date(a.primary.roomLeavingDate) - new Date(b.primary.roomLeavingDate));
+
+    return Array.from(roomNumbers).sort((a, b) => a - b).map(rn => {
+      const roomActiveMembers = members.filter(m => m.roomNumber === rn && m.isActive !== false);
+      const due = roomDues.find(r => r.roomNumber === rn) || { rentDue: 0, elecDue: 0, elecTotal: 0, elecPaid: 0, elecReading: null };
+      const partDue = receipts
+        .filter(rec => rec.roomNumber === rn && rec.isPartPayment && (rec.balanceDue || 0) > 0)
+        .reduce((s, rec) => s + (rec.balanceDue || 0), 0);
+      const joinDates  = roomActiveMembers.map(m => m.roomJoinDate).filter(Boolean).map(d => new Date(d));
+      const leaveDates = roomActiveMembers.map(m => m.roomLeavingDate).filter(Boolean).map(d => new Date(d));
+      const startDate  = joinDates.length  ? new Date(Math.min(...joinDates))  : null;
+      const endDate    = leaveDates.length ? new Date(Math.min(...leaveDates)) : null; // soonest renewal in the room
+      const [primary, ...others] = roomActiveMembers.length ? roomActiveMembers : [{ name: 'Unknown', mobileNo: '' }];
+      const diffDays = endDate ? Math.ceil((endDate - today) / (1000 * 60 * 60 * 24)) : null;
+      return {
+        roomNumber: rn, primary, others,
+        startDate, endDate, diffDays,
+        rentDue: due.rentDue || 0,
+        elecDue: due.elecDue || 0,
+        elecTotal: due.elecTotal || 0,
+        elecPaid: due.elecPaid || 0,
+        elecReading: due.elecReading || null,
+        partDue,
+        totalDue: (due.rentDue || 0) + (due.elecDue || 0) + partDue,
+        memberNames: roomActiveMembers.map(m => m.name).join(', '),
+        mobileNo: primary.mobileNo || '',
+      };
+    });
   })();
 
 
+  // Electric status shown in the dues table: 'waived' is the only manual flag;
+  // paid/unpaid/partial are always derived from actual receipts (see roomDues above).
+  const getElecStatus = (elecReading, elecTotal, elecPaid) => {
+    if (elecReading?.paymentStatus === 'waived') return 'waived';
+    if (elecTotal > 0 && elecPaid >= elecTotal) return 'paid';
+    if (elecPaid > 0) return 'partial';
+    return 'unpaid';
+  };
+
+  const saveElecWaive = async () => {
+    if (!waiveTarget) return;
+    if (!waiveReason.trim()) { toast('Please enter a reason before waiving', 'error'); return; }
+    setWaiveSaving(true);
+    try {
+      await electricAPI.updatePaymentStatus(waiveTarget._id, { paymentStatus: 'waived', waivedReason: waiveReason.trim() });
+      toast('Electric bill waived — removed from dues');
+      setWaiveTarget(null); setWaiveReason('');
+      load();
+    } catch(e) { toast(e.response?.data?.message || 'Error waiving', 'error'); }
+    finally { setWaiveSaving(false); }
+  };
+
+  const restoreElec = async (reading) => {
+    try {
+      await electricAPI.updatePaymentStatus(reading._id, { paymentStatus: 'unpaid', waivedReason: '' });
+      toast('Restored — status now follows receipts automatically');
+      load();
+    } catch(e) { toast(e.response?.data?.message || 'Error restoring', 'error'); }
+  };
+
+  // Full electric reading history for a room, opened from the dues table
+  const [elecHistoryData, setElecHistoryData] = useState([]);
+  const [elecHistoryLoading, setElecHistoryLoading] = useState(false);
+  const openElecHistory = async (roomNumber) => {
+    setElecHistoryRoom(roomNumber);
+    setElecHistoryLoading(true);
+    try {
+      const res = await electricAPI.getByRoom(roomNumber);
+      setElecHistoryData(Array.isArray(res.data) ? res.data : (res.data?.data || []));
+    } catch { setElecHistoryData([]); }
+    finally { setElecHistoryLoading(false); }
+  };
+
+
+  const sq = search.toLowerCase();
   const filterM  = (list) => !search ? list : list.filter(m =>
     (m.name||'').toLowerCase().includes(sq) ||
     String(m.roomNumber||'').includes(sq) ||
@@ -330,7 +390,7 @@ export default function DuesAndPayments() {
         <button className={`tab ${tab==='expiring'?'active':''}`} onClick={()=>setTab('expiring')}>⏰ Expiring Soon ({expiringSoon.length})</button>
       </div>
 
-      {/* ── ROOM DUES TAB ─────────────────────────────────────────────────── */}
+      {/* ── ROOM DUES TAB — single, room-ordered "Rooms Due This Month" table ── */}
       {tab === 'dues' && (
         <div>
           {/* Summary bar */}
@@ -339,7 +399,7 @@ export default function DuesAndPayments() {
               {label:'Total Rent Due',     value:fmtM(totalRentDue),  color:'var(--danger)'},
               {label:'Total Electric Due', value:fmtM(totalElecDue),  color:'#f39c12'},
               {label:'Grand Total Due',    value:fmtM(totalDueAll),   color:'var(--danger)',bold:true},
-              {label:'Rooms with Dues',    value:dueDateRooms.length, color:'var(--text)'},
+              {label:'Rooms Due This Month', value:roomsDueThisMonth.length, color:'var(--text)'},
             ].map((s,i)=>(
               <div key={i} className="card" style={{padding:'12px 16px',flex:'1 1 140px',minWidth:0}}>
                 <div style={{fontSize:'0.7rem',color:'var(--text3)',textTransform:'uppercase',letterSpacing:'0.07em',marginBottom:4}}>{s.label}</div>
@@ -348,43 +408,38 @@ export default function DuesAndPayments() {
             ))}
           </div>
 
+          <div style={{marginBottom:10,padding:'10px 14px',background:'rgba(240,165,0,0.06)',borderRadius:6,fontSize:'0.8rem',color:'var(--text2)'}}>
+            📅 Every room with rent/electric due this month (1st–{monthEndDay}), room-wise. Rent/Electric/Final receipts clear these automatically — a part payment leaves the remainder.
+          </div>
+
           {/* Print button */}
           <div style={{display:'flex',justifyContent:'flex-end',marginBottom:10}}>
             <button className="btn btn-secondary btn-xs" onClick={() => {
-              const rows = dueDateRooms.map(g => {
-                const roomMems = members.filter(m => m.roomNumber === g.roomNumber && m.isActive !== false);
-                const mobile = roomMems[0]?.mobileNo || g.mobileNo || '—';
-                const expiries = roomMems.map(m => m.roomLeavingDate).filter(Boolean).map(d => new Date(d));
-                let expiryCell = '—';
-                if (expiries.length > 0) {
-                  const soonest = new Date(Math.min(...expiries));
-                  const diffDays = Math.ceil((soonest - today) / (1000 * 60 * 60 * 24));
-                  const dateStr = soonest.toLocaleDateString('en-IN', { day:'numeric', month:'short', year:'numeric' });
-                  const daysStr = diffDays < 0 ? `Expired ${Math.abs(diffDays)}d ago` : diffDays === 0 ? 'Today' : `${diffDays}d left`;
-                  const cls = diffDays < 0 ? 'red' : diffDays <= 7 ? 'gold' : 'green';
-                  expiryCell = `<span class="${cls}" style="font-weight:700">${dateStr}</span><br><small style="color:#888;font-size:10px">${daysStr}</small>`;
-                }
+              const rows = roomsDueThisMonth.map(g => {
+                const dateCell = g.endDate
+                  ? `<span style="font-weight:700">${g.endDate.toLocaleDateString('en-IN',{day:'numeric',month:'short',year:'numeric'})}</span><br><small style="color:#888;font-size:10px">${g.diffDays<0?`Overdue ${Math.abs(g.diffDays)}d`:g.diffDays===0?'Today':`${g.diffDays}d left`}</small>`
+                  : '—';
                 return `<tr>
                   <td><strong>Room ${g.roomNumber}</strong></td>
                   <td>${g.memberNames}</td>
-                  <td>${mobile}</td>
-                  <td>${expiryCell}</td>
+                  <td>${g.startDate?g.startDate.toLocaleDateString('en-IN'):'—'}</td>
+                  <td>${dateCell}</td>
                   <td class="red">₹${(g.rentDue||0).toLocaleString('en-IN')}</td>
                   <td class="${g.elecDue>0?'gold':''}">₹${(g.elecDue||0).toLocaleString('en-IN')}</td>
                   <td class="${g.partDue>0?'purple':''}">₹${(g.partDue||0).toLocaleString('en-IN')}</td>
                   <td class="red"><strong>₹${(g.totalDue||0).toLocaleString('en-IN')}</strong></td>
                 </tr>`;
               }).join('');
-              doPrint(`Room Dues as of ${today.toLocaleDateString('en-IN')}`, `
-                <h2>Rooms with Outstanding Dues — as of ${today.toLocaleDateString('en-IN')}</h2>
-                <p>Grand Total Due: ₹${totalDueAll.toLocaleString('en-IN')} across ${dueDateRooms.length} rooms</p>
-                <table><thead><tr><th>Room</th><th>Members</th><th>Mobile</th><th>Plan Expiry</th><th>Rent Due</th><th>Electric Due</th><th>Part-Pay Balance</th><th>Total Due</th></tr></thead>
+              doPrint(`Rooms Due This Month — ${MONTHS[curMon-1]} ${curYr}`, `
+                <h2>Rooms Due This Month — ${MONTHS[curMon-1]} ${curYr} (1–${monthEndDay})</h2>
+                <p>Grand Total Due: ₹${totalDueAll.toLocaleString('en-IN')} across ${roomsDueThisMonth.length} rooms</p>
+                <table><thead><tr><th>Room</th><th>Members</th><th>Start</th><th>End / Renewal</th><th>Rent Due</th><th>Electric Due</th><th>Part-Pay Balance</th><th>Total Due</th></tr></thead>
                 <tbody>${rows}</tbody></table>`);
             }}>🖨 Print Dues List</button>
           </div>
 
-          {dueDateRooms.length === 0 ? (
-            <div className="empty-state"><div className="empty-icon">✅</div><p>No rooms with outstanding dues</p></div>
+          {roomsDueThisMonth.length === 0 ? (
+            <div className="empty-state"><div className="empty-icon">✅</div><p>No rooms due this month</p></div>
           ) : (
             <div className="card">
               <div className="table-wrap">
@@ -392,8 +447,9 @@ export default function DuesAndPayments() {
                   <thead>
                     <tr>
                       <th>Room</th>
-                      <th>Primary Member</th>
-                      <th>Plan Expiry</th>
+                      <th>Members</th>
+                      <th>Start Date</th>
+                      <th>End Date</th>
                       <th>Rent Due</th>
                       <th>Electric Due</th>
                       <th>Part-Pay Balance</th>
@@ -402,9 +458,10 @@ export default function DuesAndPayments() {
                     </tr>
                   </thead>
                   <tbody>
-                    {filterR(dueDateRooms).map(g => (
+                    {filterR(roomsDueThisMonth).map(g => {
+                      const elecStatus = getElecStatus(g.elecReading, g.elecTotal, g.elecPaid);
+                      return (
                       <React.Fragment key={g.roomNumber}>
-                        {/* Primary row */}
                         <tr style={{borderBottom: g.others.length>0 ? 'none':'1px solid var(--border)'}}>
                           <td>
                             <span className="badge badge-blue">Room {g.roomNumber}</span>
@@ -413,29 +470,40 @@ export default function DuesAndPayments() {
                             )}
                           </td>
                           <td style={{fontWeight:600,color:'var(--text)'}}>{g.primary.name}</td>
+                          <td style={{fontSize:'0.78rem',color:'var(--text2)'}}>{g.startDate ? g.startDate.toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'}) : '—'}</td>
                           <td style={{fontSize:'0.78rem'}}>
-                            {(() => {
-                              const roomMems = members.filter(m => m.roomNumber === g.roomNumber && m.isActive !== false);
-                              const expiries = roomMems.map(m => m.roomLeavingDate).filter(Boolean).map(d => new Date(d));
-                              if (!expiries.length) return <span style={{color:'var(--text3)'}}>—</span>;
-                              const soonest = new Date(Math.min(...expiries));
-                              const diff = Math.ceil((soonest - today) / (1000*60*60*24));
-                              const daysLabel = diff < 0 ? `Expired ${Math.abs(diff)}d ago` : diff === 0 ? 'Today' : `${diff}d left`;
-                              const color = diff < 0 ? 'var(--danger)' : diff <= 7 ? '#f39c12' : 'var(--success)';
-                              const dateStr = soonest.toLocaleDateString('en-IN', { day:'numeric', month:'short', year:'numeric' });
-                              return (
-                                <div>
-                                  <span style={{color, fontWeight:700}}>{dateStr}</span>
-                                  <div style={{fontSize:'0.68rem', color:'var(--text3)', marginTop:2}}>{daysLabel}</div>
+                            {g.endDate ? (
+                              <div>
+                                <span style={{color: g.diffDays<0 ? 'var(--danger)' : g.diffDays<=7 ? '#f39c12' : 'var(--success)', fontWeight:700}}>
+                                  {g.endDate.toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'})}
+                                </span>
+                                <div style={{fontSize:'0.68rem', color:'var(--text3)', marginTop:2}}>
+                                  {g.diffDays<0 ? `Overdue ${Math.abs(g.diffDays)}d` : g.diffDays===0 ? 'Today' : `${g.diffDays}d left`}
                                 </div>
-                              );
-                            })()}
+                              </div>
+                            ) : <span style={{color:'var(--text3)'}}>—</span>}
                           </td>
                           <td style={{color:g.rentDue>0?'var(--danger)':'var(--text3)',fontWeight:g.rentDue>0?700:400}}>
                             {g.rentDue>0 ? fmtM(g.rentDue) : '—'}
                           </td>
-                          <td style={{color:g.elecDue>0?'#f39c12':'var(--text3)',fontWeight:g.elecDue>0?700:400}}>
-                            {g.elecDue>0 ? fmtM(g.elecDue) : '—'}
+                          <td>
+                            <div style={{display:'flex',alignItems:'center',gap:6,flexWrap:'wrap'}}>
+                              <span style={{color:g.elecDue>0?'#f39c12':'var(--text3)',fontWeight:g.elecDue>0?700:400}}>
+                                {g.elecDue>0 ? fmtM(g.elecDue) : '—'}
+                              </span>
+                              {g.elecReading && <StatusDot status={elecStatus} />}
+                              {g.elecReading && elecStatus !== 'waived' && g.elecDue > 0 && (
+                                <button className="btn btn-xs" style={{background:'rgba(155,89,182,0.12)',color:'#8e44ad',border:'1px solid rgba(155,89,182,0.3)',fontSize:'0.66rem',padding:'2px 6px'}}
+                                  onClick={()=>{ setWaiveTarget(g.elecReading); setWaiveReason(''); }}
+                                  title="Waive this room's electric bill">🚫 Waive</button>
+                              )}
+                              {g.elecReading && elecStatus === 'waived' && (
+                                <button className="btn btn-xs btn-secondary" style={{fontSize:'0.66rem',padding:'2px 6px'}}
+                                  onClick={()=>restoreElec(g.elecReading)} title="Restore — status will follow receipts again">↩ Restore</button>
+                              )}
+                              <button className="btn btn-xs btn-secondary" style={{fontSize:'0.66rem',padding:'2px 6px'}}
+                                onClick={()=>openElecHistory(g.roomNumber)} title="Full electric history for this room">🕒 History</button>
+                            </div>
                           </td>
                           <td style={{color:g.partDue>0?'var(--purple)':'var(--text3)',fontWeight:g.partDue>0?700:400}}>
                             {g.partDue>0 ? fmtM(g.partDue) : '—'}
@@ -452,13 +520,13 @@ export default function DuesAndPayments() {
                                     `━━━━━━━━━━━━━━━━`,
                                     `Dear *${g.primary.name}*,`,
                                     `🚪 Room No: *${g.roomNumber}*`,
+                                    g.endDate ? `⏰ Validity: *${g.startDate?g.startDate.toLocaleDateString('en-IN'):'—'} → ${g.endDate.toLocaleDateString('en-IN')}*` : '',
                                     ``,
                                     g.rentDue>0 ? `🏠 Rent Due: *₹${g.rentDue.toLocaleString('en-IN')}*` : '',
                                     g.elecDue>0 ? `⚡ Electric Due: *₹${g.elecDue.toLocaleString('en-IN')}*` : '',
                                     g.partDue>0 ? `📌 Part-Pay Balance: *₹${g.partDue.toLocaleString('en-IN')}*` : '',
                                     ``,
                                     `💰 *Total Due: ₹${g.totalDue.toLocaleString('en-IN')}*`,
-                                    `⏱ Due since: *${g.daysDue} day${g.daysDue!==1?'s':''}*`,
                                     ``,
                                     `Please clear dues at earliest.`,
                                     `Late payment fine: ₹50/day.`,
@@ -477,7 +545,7 @@ export default function DuesAndPayments() {
                           <tr key={om._id} style={{background:'var(--bg3)',opacity:0.85,borderBottom:oi===g.others.length-1?'1px solid var(--border)':'none'}}>
                             <td style={{paddingLeft:24,color:'var(--text3)',fontSize:'0.75rem'}}>↳ same room</td>
                             <td style={{color:'var(--text2)',fontSize:'0.83rem'}}>{om.name}</td>
-                            <td colSpan={5} style={{color:'var(--text3)',fontSize:'0.75rem'}}>same dues as above</td>
+                            <td colSpan={6} style={{color:'var(--text3)',fontSize:'0.75rem'}}>same dues as above</td>
                             <td>
                               {om.mobileNo && (
                                 <button style={{background:'#25d366',color:'white',border:'none',borderRadius:5,padding:'3px 7px',cursor:'pointer',fontSize:'0.7rem',fontWeight:700}}
@@ -490,7 +558,6 @@ export default function DuesAndPayments() {
                                       g.elecDue>0 ? `⚡ Electric Due: *₹${g.elecDue.toLocaleString('en-IN')}*` : '',
                                       g.partDue>0 ? `📌 Part-Pay Balance: *₹${g.partDue.toLocaleString('en-IN')}*` : '',
                                       `💰 *Total Due: ₹${g.totalDue.toLocaleString('en-IN')}*`,
-                                      `⏱ Due since: *${g.daysDue} day${g.daysDue!==1?'s':''}*`,
                                       ``,`Please clear dues. Late payment fine: ₹50/day. Thank you 🙏`,
                                     ].filter(Boolean).join('\n');
                                     window.open(`https://wa.me/91${String(om.mobileNo).replace(/\D/g,'').slice(-10)}?text=${encodeURIComponent(msg)}`,'_blank');
@@ -502,87 +569,12 @@ export default function DuesAndPayments() {
                           </tr>
                         ))}
                       </React.Fragment>
-                    ))}
+                    );})}
                   </tbody>
                 </table>
               </div>
             </div>
           )}
-
-          {/* Rooms due this month by renewal date — separate from the unpaid-rent table above */}
-          <div style={{marginTop:22}}>
-            <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:10}}>
-              <h3 style={{fontSize:'1rem',margin:0}}>📅 Rooms Due This Month (by Renewal Date)</h3>
-              <span style={{fontSize:'0.78rem',color:'var(--text3)'}}>{dueThisMonthRooms.length} room{dueThisMonthRooms.length!==1?'s':''}</span>
-            </div>
-            {dueThisMonthRooms.length === 0 ? (
-              <div className="empty-state" style={{padding:'20px 0'}}><div className="empty-icon">✅</div><p>No rooms renewing this month</p></div>
-            ) : (
-              <div className="card">
-                <div className="table-wrap">
-                  <table>
-                    <thead>
-                      <tr>
-                        <th>Room</th><th>Primary Member</th><th>Mobile</th>
-                        <th>Renewal Date</th><th>Status</th>
-                        <th>Rent</th><th>Electric Due</th><th>Total Due</th><th>WhatsApp</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {filterR(dueThisMonthRooms.map(g => ({ ...g, memberNames: [g.primary, ...g.others].map(m=>m.name).join(', '), mobileNo: g.primary.mobileNo }))).map(g => {
-                        const totalDueM = (g.primary.rent || 0) + g.elec.elecDue;
-                        return (
-                          <React.Fragment key={g.roomNumber}>
-                            <tr style={{background:g.diffDays<0?'rgba(231,76,60,0.05)':'transparent'}}>
-                              <td>
-                                <span className="badge badge-blue">Room {g.roomNumber}</span>
-                                {g.others.length>0 && <span style={{marginLeft:5,fontSize:'0.68rem',color:'var(--text3)'}}>+{g.others.length} more</span>}
-                              </td>
-                              <td style={{fontWeight:600,color:'var(--text)'}}>{g.primary.name}</td>
-                              <td style={{fontSize:'0.82rem'}}>{g.primary.mobileNo||'—'}</td>
-                              <td style={{fontSize:'0.82rem'}}>{fmt(g.primary.roomLeavingDate)}</td>
-                              <td>
-                                <span style={{background:g.diffDays<0?'rgba(231,76,60,0.12)':g.diffDays<=3?'rgba(231,76,60,0.12)':'rgba(240,165,0,0.12)',color:g.diffDays<0||g.diffDays<=3?'var(--danger)':'var(--accent)',padding:'2px 10px',borderRadius:10,fontWeight:700,fontSize:'0.78rem'}}>
-                                  {g.diffDays<0 ? `Overdue ${Math.abs(g.diffDays)}d` : g.diffDays===0 ? 'Today' : `${g.diffDays}d left`}
-                                </span>
-                              </td>
-                              <td>{g.primary.rent?fmtM(g.primary.rent):'—'}</td>
-                              <td style={{color:g.elec.elecDue>0?'#f39c12':'var(--text3)',fontWeight:g.elec.elecDue>0?700:400}}>{g.elec.elecDue>0?fmtM(g.elec.elecDue):'—'}</td>
-                              <td style={{color:totalDueM>0?'var(--danger)':'var(--text3)',fontWeight:700}}>{totalDueM>0?fmtM(totalDueM):'—'}</td>
-                              <td>
-                                {g.primary.mobileNo && (
-                                  <button style={{background:'#25d366',color:'white',border:'none',borderRadius:5,padding:'4px 9px',cursor:'pointer',fontSize:'0.72rem',fontWeight:700}}
-                                    onClick={() => {
-                                      const msg = [
-                                        `🏠 *Hostel Renewal Reminder*`,
-                                        `Dear *${g.primary.name}*,`,
-                                        `🚪 Room No: *${g.roomNumber}*`,
-                                        `⏰ Plan ${g.diffDays<0?'expired':'expires'}: *${fmt(g.primary.roomLeavingDate)}*`,
-                                        g.primary.rent ? `🏠 Rent: ₹${(g.primary.rent||0).toLocaleString('en-IN')}` : '',
-                                        g.elec.elecDue>0 ? `⚡ Electric Due: ₹${g.elec.elecDue.toLocaleString('en-IN')}` : '',
-                                        ``, `Please renew and clear dues. Thank you 🙏`,
-                                      ].filter(Boolean).join('\n');
-                                      window.open(`https://wa.me/91${String(g.primary.mobileNo).replace(/\D/g,'').slice(-10)}?text=${encodeURIComponent(msg)}`,'_blank');
-                                    }}>📱</button>
-                                )}
-                              </td>
-                            </tr>
-                            {g.others.map(om => (
-                              <tr key={om._id} style={{background:'var(--bg3)',opacity:0.85}}>
-                                <td style={{paddingLeft:24,color:'var(--text3)',fontSize:'0.75rem'}}>↳ same room</td>
-                                <td style={{color:'var(--text2)',fontSize:'0.83rem'}}>{om.name}</td>
-                                <td colSpan={7} style={{color:'var(--text3)',fontSize:'0.75rem'}}>same renewal as above</td>
-                              </tr>
-                            ))}
-                          </React.Fragment>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            )}
-          </div>
         </div>
       )}
       {tab === 'partpay' && (
@@ -827,6 +819,95 @@ export default function DuesAndPayments() {
               </table>
             </div>
           )}
+        </div>
+      )}
+
+      {/* ── Electric Waive Modal (moved here from Electric page — waive right from dues) ── */}
+      {waiveTarget && (
+        <div className="modal-overlay" onClick={e=>e.target===e.currentTarget&&(setWaiveTarget(null),setWaiveReason(''))}>
+          <div className="modal" style={{maxWidth:420}}>
+            <div className="modal-header">
+              <h3>🚫 Waive Electric Bill</h3>
+              <button className="close-btn" onClick={()=>{setWaiveTarget(null);setWaiveReason('');}}>✕</button>
+            </div>
+            <div className="modal-body">
+              <div style={{background:'var(--bg3)',borderRadius:8,padding:'12px 16px',marginBottom:16,fontSize:'0.85rem'}}>
+                <div style={{color:'var(--text3)',marginBottom:4}}>Room {waiveTarget.roomNumber} · {MONTHS[waiveTarget.month-1]} {waiveTarget.year}</div>
+                <div style={{color:'var(--accent)',fontFamily:'Rajdhani',fontSize:'1.4rem',fontWeight:700}}>₹{waiveTarget.totalAmount}</div>
+                <div style={{color:'var(--text3)',fontSize:'0.78rem'}}>{waiveTarget.unitsConsumed} units × ₹{waiveTarget.ratePerUnit}/unit</div>
+              </div>
+              <div style={{background:'rgba(155,89,182,0.08)',border:'1px solid rgba(155,89,182,0.25)',borderRadius:6,padding:'10px 14px',marginBottom:14,fontSize:'0.82rem',color:'var(--text2)'}}>
+                Waiving removes this bill from dues and <strong>does not count it as income</strong>. Use this when a member won't pay and you're writing it off.
+              </div>
+              <div className="form-group">
+                <label style={{fontWeight:600}}>Reason for waiving <span style={{color:'var(--danger)'}}>*</span></label>
+                <input
+                  autoFocus
+                  type="text"
+                  value={waiveReason}
+                  onChange={e => setWaiveReason(e.target.value)}
+                  placeholder="e.g. Member refused to pay, vacated without notice, dispute settled…"
+                  style={{width:'100%'}}
+                />
+              </div>
+            </div>
+            <div className="modal-footer">
+              <button className="btn btn-secondary" onClick={()=>{setWaiveTarget(null);setWaiveReason('');}} disabled={waiveSaving}>Cancel</button>
+              <button className="btn btn-primary" style={{background:'#8e44ad',borderColor:'#8e44ad'}}
+                onClick={saveElecWaive} disabled={waiveSaving || !waiveReason.trim()}>
+                {waiveSaving ? '⏳ Saving…' : '🚫 Confirm Waive'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Full Electric History Modal ───────────────────────────────────── */}
+      {elecHistoryRoom && (
+        <div className="modal-overlay" onClick={e=>e.target===e.currentTarget&&setElecHistoryRoom(null)}>
+          <div className="modal" style={{maxWidth:760}}>
+            <div className="modal-header">
+              <h3>⚡ Room {elecHistoryRoom} — Full Electric History</h3>
+              <button className="close-btn" onClick={()=>setElecHistoryRoom(null)}>✕</button>
+            </div>
+            <div className="modal-body">
+              {elecHistoryLoading ? (
+                <div style={{textAlign:'center',padding:24,color:'var(--text3)'}}>⏳ Loading...</div>
+              ) : elecHistoryData.length === 0 ? (
+                <div className="empty-state"><div className="empty-icon">⚡</div><p>No electric readings for this room yet</p></div>
+              ) : (
+                <div className="table-wrap">
+                  <table>
+                    <thead>
+                      <tr><th>Month / Year</th><th>Start</th><th>End</th><th>Units</th><th>Rate</th><th>Bill</th><th>Status</th></tr>
+                    </thead>
+                    <tbody>
+                      {elecHistoryData.map(r => {
+                        const paid = r.paymentStatus === 'waived' ? 0 : receipts
+                          .filter(rec => rec.roomNumber === elecHistoryRoom &&
+                            ((rec.packageName==='electric'||rec.paymentType==='electric') || (rec.packageName==='final'||rec.paymentType==='final')) &&
+                            rec.receiptDate && new Date(rec.receiptDate).getMonth()+1===r.month && new Date(rec.receiptDate).getFullYear()===r.year)
+                          .reduce((s,rec) => s + ((rec.packageName==='final'||rec.paymentType==='final') ? (rec.electricAmount>0?rec.electricAmount:0) : (rec.amountPaid ?? rec.totalAmount ?? 0)), 0);
+                        const status = r.paymentStatus === 'waived' ? 'waived' : (paid >= (r.totalAmount||0) && (r.totalAmount||0) > 0 ? 'paid' : paid > 0 ? 'partial' : 'unpaid');
+                        return (
+                          <tr key={r._id} style={status==='waived'?{opacity:0.6}:{}}>
+                            <td style={{fontWeight:500}}>{MONTHS[r.month-1]} {r.year}</td>
+                            <td>{r.startReading}</td>
+                            <td>{r.endReading}</td>
+                            <td style={{color:'var(--info)',fontWeight:600}}>{r.unitsConsumed} units</td>
+                            <td>₹{r.ratePerUnit}/unit</td>
+                            <td style={{fontWeight:700,textDecoration:status==='waived'?'line-through':'none'}}>₹{r.totalAmount}</td>
+                            <td><StatusDot status={status} />{status==='waived' && r.waivedReason && <div style={{fontSize:'0.66rem',color:'var(--text3)',marginTop:2}}>"{r.waivedReason}"</div>}</td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+            <div className="modal-footer"><button className="btn btn-secondary" onClick={()=>setElecHistoryRoom(null)}>Close</button></div>
+          </div>
         </div>
       )}
     </div>

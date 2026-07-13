@@ -23,6 +23,7 @@ router.get('/room/:roomNumber/summary', ctrl.roomSummary);
 router.get('/room/:roomNumber',         ctrl.byRoom);
 router.get('/',                         ctrl.list);
 router.post('/',                        ctrl.create);
+router.put('/:id',                      ctrl.update);
 router.delete('/:id',                   ctrl.remove);
 
 module.exports = router;

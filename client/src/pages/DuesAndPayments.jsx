@@ -151,13 +151,29 @@ export default function DuesAndPayments() {
       // Fall back to the Room config's rent only if no member has a rent set yet.
       const fixedRent = memberRentSum || r.rent || 0;
 
-      // All receipts for this room this month
-      const roomReceiptsThisMonth = receipts.filter(rec =>
-        rec.roomNumber === rNum &&
-        rec.receiptDate &&
-        new Date(rec.receiptDate).getMonth() + 1 === curMon &&
-        new Date(rec.receiptDate).getFullYear() === curYr
-      );
+      const monthStart = new Date(curYr, curMon - 1, 1, 0, 0, 0, 0);
+      const monthEnd   = new Date(curYr, curMon, 0, 23, 59, 59, 999);
+
+      // A receipt "counts toward this month's rent" if the period it actually
+      // covers (fromDate → toDate, the validity dates chosen when it was made)
+      // overlaps the current calendar month — NOT simply if it was created
+      // (receiptDate) sometime this month. This matters a lot in practice:
+      // someone paying on 28 June for their July stay should have that payment
+      // count for July, and someone catching up on an old unpaid June with a
+      // receipt dated in July should NOT have that show up as "July paid".
+      // Only receipts with no validity dates at all (older/manual entries)
+      // fall back to the old receiptDate-based match.
+      const roomReceiptsThisMonth = receipts.filter(rec => {
+        if (rec.roomNumber !== rNum) return false;
+        if (rec.fromDate || rec.toDate) {
+          const from = rec.fromDate ? new Date(rec.fromDate) : monthStart;
+          const to   = rec.toDate   ? new Date(rec.toDate)   : monthEnd;
+          return from <= monthEnd && to >= monthStart;
+        }
+        return rec.receiptDate &&
+          new Date(rec.receiptDate).getMonth() + 1 === curMon &&
+          new Date(rec.receiptDate).getFullYear() === curYr;
+      });
 
       // Rent paid = sum of ALL receipt types this month EXCEPT electric.
       // Use amountPaid (not totalAmount) so part-payments are counted correctly.
@@ -249,9 +265,6 @@ export default function DuesAndPayments() {
     return Array.from(roomNumbers).sort((a, b) => a - b).map(rn => {
       const roomActiveMembers = members.filter(m => m.roomNumber === rn && m.isActive !== false);
       const due = roomDues.find(r => r.roomNumber === rn) || { rentDue: 0, elecDue: 0, elecTotal: 0, elecPaid: 0, elecReading: null };
-      const partDue = receipts
-        .filter(rec => rec.roomNumber === rn && rec.isPartPayment && (rec.balanceDue || 0) > 0)
-        .reduce((s, rec) => s + (rec.balanceDue || 0), 0);
       const joinDates  = roomActiveMembers.map(m => m.roomJoinDate).filter(Boolean).map(d => new Date(d));
       const leaveDates = roomActiveMembers.map(m => m.roomLeavingDate).filter(Boolean).map(d => new Date(d));
       const startDate  = joinDates.length  ? new Date(Math.min(...joinDates))  : null;
@@ -266,12 +279,15 @@ export default function DuesAndPayments() {
         elecTotal: due.elecTotal || 0,
         elecPaid: due.elecPaid || 0,
         elecReading: due.elecReading || null,
-        partDue,
-        totalDue: (due.rentDue || 0) + (due.elecDue || 0) + partDue,
+        totalDue: (due.rentDue || 0) + (due.elecDue || 0),
         memberNames: roomActiveMembers.map(m => m.name).join(', '),
         mobileNo: primary.mobileNo || '',
       };
-    });
+    })
+    // Only rooms that actually owe something for THIS month — a renewal
+    // landing this month whose rent is already paid through shouldn't clutter
+    // the list with a ₹0 row.
+    .filter(g => g.totalDue > 0);
   })();
 
 
@@ -426,14 +442,13 @@ export default function DuesAndPayments() {
                   <td>${dateCell}</td>
                   <td class="red">₹${(g.rentDue||0).toLocaleString('en-IN')}</td>
                   <td class="${g.elecDue>0?'gold':''}">₹${(g.elecDue||0).toLocaleString('en-IN')}</td>
-                  <td class="${g.partDue>0?'purple':''}">₹${(g.partDue||0).toLocaleString('en-IN')}</td>
                   <td class="red"><strong>₹${(g.totalDue||0).toLocaleString('en-IN')}</strong></td>
                 </tr>`;
               }).join('');
               doPrint(`Rooms Due This Month — ${MONTHS[curMon-1]} ${curYr}`, `
                 <h2>Rooms Due This Month — ${MONTHS[curMon-1]} ${curYr} (1–${monthEndDay})</h2>
                 <p>Grand Total Due: ₹${totalDueAll.toLocaleString('en-IN')} across ${roomsDueThisMonth.length} rooms</p>
-                <table><thead><tr><th>Room</th><th>Members</th><th>Start</th><th>End / Renewal</th><th>Rent Due</th><th>Electric Due</th><th>Part-Pay Balance</th><th>Total Due</th></tr></thead>
+                <table><thead><tr><th>Room</th><th>Members</th><th>Start</th><th>End / Renewal</th><th>Rent Due</th><th>Electric Due</th><th>Total Due</th></tr></thead>
                 <tbody>${rows}</tbody></table>`);
             }}>🖨 Print Dues List</button>
           </div>
@@ -452,7 +467,6 @@ export default function DuesAndPayments() {
                       <th>End Date</th>
                       <th>Rent Due</th>
                       <th>Electric Due</th>
-                      <th>Part-Pay Balance</th>
                       <th>Total Due</th>
                       <th>WhatsApp</th>
                     </tr>
@@ -505,9 +519,6 @@ export default function DuesAndPayments() {
                                 onClick={()=>openElecHistory(g.roomNumber)} title="Full electric history for this room">🕒 History</button>
                             </div>
                           </td>
-                          <td style={{color:g.partDue>0?'var(--purple)':'var(--text3)',fontWeight:g.partDue>0?700:400}}>
-                            {g.partDue>0 ? fmtM(g.partDue) : '—'}
-                          </td>
                           <td style={{color:'var(--danger)',fontWeight:800,fontFamily:'Rajdhani',fontSize:'1rem'}}>
                             {fmtM(g.totalDue)}
                           </td>
@@ -524,7 +535,6 @@ export default function DuesAndPayments() {
                                     ``,
                                     g.rentDue>0 ? `🏠 Rent Due: *₹${g.rentDue.toLocaleString('en-IN')}*` : '',
                                     g.elecDue>0 ? `⚡ Electric Due: *₹${g.elecDue.toLocaleString('en-IN')}*` : '',
-                                    g.partDue>0 ? `📌 Part-Pay Balance: *₹${g.partDue.toLocaleString('en-IN')}*` : '',
                                     ``,
                                     `💰 *Total Due: ₹${g.totalDue.toLocaleString('en-IN')}*`,
                                     ``,
@@ -545,7 +555,7 @@ export default function DuesAndPayments() {
                           <tr key={om._id} style={{background:'var(--bg3)',opacity:0.85,borderBottom:oi===g.others.length-1?'1px solid var(--border)':'none'}}>
                             <td style={{paddingLeft:24,color:'var(--text3)',fontSize:'0.75rem'}}>↳ same room</td>
                             <td style={{color:'var(--text2)',fontSize:'0.83rem'}}>{om.name}</td>
-                            <td colSpan={6} style={{color:'var(--text3)',fontSize:'0.75rem'}}>same dues as above</td>
+                            <td colSpan={5} style={{color:'var(--text3)',fontSize:'0.75rem'}}>same dues as above</td>
                             <td>
                               {om.mobileNo && (
                                 <button style={{background:'#25d366',color:'white',border:'none',borderRadius:5,padding:'3px 7px',cursor:'pointer',fontSize:'0.7rem',fontWeight:700}}
@@ -556,7 +566,6 @@ export default function DuesAndPayments() {
                                       `🚪 Room No: *${g.roomNumber}*`,
                                       g.rentDue>0 ? `🏠 Rent Due: *₹${g.rentDue.toLocaleString('en-IN')}*` : '',
                                       g.elecDue>0 ? `⚡ Electric Due: *₹${g.elecDue.toLocaleString('en-IN')}*` : '',
-                                      g.partDue>0 ? `📌 Part-Pay Balance: *₹${g.partDue.toLocaleString('en-IN')}*` : '',
                                       `💰 *Total Due: ₹${g.totalDue.toLocaleString('en-IN')}*`,
                                       ``,`Please clear dues. Late payment fine: ₹50/day. Thank you 🙏`,
                                     ].filter(Boolean).join('\n');

@@ -1,6 +1,5 @@
 const Receipt = require('../models/Receipt');
 const Hostel = require('../models/Hostel');
-const Member = require('../models/Member');
 const audit = require('../services/audit');
 const notify = require('../services/notifications');
 const validate = require('../utils/validate');
@@ -20,26 +19,22 @@ exports.list = async (req, res, next) => {
   try {
     const hostelId = await getHostelId(req);
     const page = Math.max(1, parseInt(req.query.page) || 1);
-    const limit = Math.min(500, parseInt(req.query.limit) || 50);
+    const limit = Math.min(2000, parseInt(req.query.limit) || 50);
     const skip = (page - 1) * limit;
-    const { search, room, fromDate, toDate } = req.query;
-    
-    const base = hostelId ? { hostelId } : {};
-    if (room) base.roomNumber = parseInt(room);
-    if (fromDate && toDate) {
-      base.receiptDate = { $gte: new Date(fromDate), $lte: new Date(toDate) };
+    const query = hostelId ? { hostelId } : {};
+    if (req.query.room) query.roomNumber = parseInt(req.query.room);
+    if (req.query.type) query.packageName = req.query.type;
+    if (req.query.mode) query.modeOfPayment = req.query.mode;
+    if (req.query.search) {
+      query.$or = [
+        { memberName: { $regex: req.query.search, $options: 'i' } },
+        { memberMobile: { $regex: req.query.search } },
+        { billNumber: { $regex: req.query.search, $options: 'i' } },
+        { roomNumber: isNaN(parseInt(req.query.search)) ? undefined : parseInt(req.query.search) },
+      ].filter(Boolean);
     }
-    
-    const query = search ? {
-      ...base,
-      $or: [
-        { billNumber: { $regex: search, $options: 'i' } },
-        { memberName: { $regex: search, $options: 'i' } },
-        { memberMobile: { $regex: search } },
-        { roomNumber: isNaN(parseInt(search)) ? undefined : parseInt(search) },
-      ].filter(Boolean),
-    } : base;
-    
+    if (req.query.from) query.receiptDate = { ...query.receiptDate, $gte: new Date(req.query.from) };
+    if (req.query.to) query.receiptDate = { ...query.receiptDate, $lte: new Date(req.query.to) };
     const [data, total] = await Promise.all([
       Receipt.find(query).sort({ receiptDate: -1 }).skip(skip).limit(limit).lean(),
       Receipt.countDocuments(query),
@@ -51,112 +46,149 @@ exports.list = async (req, res, next) => {
 exports.nextNumbers = async (req, res, next) => {
   try {
     const hostelId = await getHostelId(req);
+    const query = hostelId ? { hostelId } : {};
+    const last = await Receipt.findOne(query).sort({ receiptNumber: -1 });
+    const nextNum = last ? (last.receiptNumber || 0) + 1 : 1;
     const year = new Date().getFullYear();
     const shortYear = `${String(year).slice(2)}-${String(year + 1).slice(2)}`;
-    
-    const last = await Receipt.findOne({ hostelId, billYear: shortYear }).sort({ billSerial: -1 });
-    const nextSerial = (last?.billSerial || 0) + 1;
-    const billNumber = `HBL/${shortYear}/${String(nextSerial).padStart(4, '0')}`;
-    
-    res.json({ nextSerial, billNumber, billYear: shortYear });
+    const lastBill = await Receipt.findOne({ ...query, billYear: shortYear }).sort({ billSerial: -1 });
+    const nextSerial = lastBill ? (lastBill.billSerial || 0) + 1 : 1;
+    res.json({ receiptNumber: nextNum, billNumber: `SB/${shortYear}/${String(nextSerial).padStart(3, '0')}`, billYear: shortYear, billSerial: nextSerial });
   } catch(err) { next(err); }
 };
 
+// Reset bill serial counter for new financial year
 exports.resetSerial = async (req, res, next) => {
   try {
     const hostelId = await getHostelId(req);
-    const { billYear } = req.body;
-    
-    if (!billYear) return res.status(400).json({ message: 'Bill year is required' });
-    
-    await Receipt.updateMany({ hostelId, billYear }, { billSerial: 0 });
-    await audit.log({ hostelId, action: 'RESET_SERIAL', entity: 'receipt', description: `Reset bill serial for ${billYear}`, user: req.user });
-    
-    res.json({ message: 'Serial reset successfully', billYear });
+    if (!hostelId) return res.status(400).json({ message: 'No hostel found' });
+    const { yearType } = req.body; // 'april' (26-27) or 'january' (26-26)
+    const now = new Date();
+    let fromYear, toYear;
+    if (yearType === 'april') {
+      // Financial year April to March: e.g. Apr 2026 → Mar 2027 = "26-27"
+      fromYear = now.getMonth() >= 3 ? now.getFullYear() : now.getFullYear() - 1;
+      toYear   = fromYear + 1;
+    } else {
+      // Calendar year January to December: e.g. Jan 2026 → Dec 2026 = "26-26"
+      fromYear = now.getFullYear();
+      toYear   = fromYear;
+    }
+    const newYear = `${String(fromYear).slice(2)}-${String(toYear).slice(2)}`;
+    // Mark all receipts in this new year as having serial 0 so next one starts at 1
+    // We do this by simply checking — no deletion, just confirm the year string is ready
+    res.json({
+      message: `Bill numbers will now use year format: SB/${newYear}/001`,
+      newYear,
+      nextBill: `SB/${newYear}/001`,
+    });
+  } catch(err) { next(err); }
+};
+
+exports.clearDue = async (req, res, next) => {
+  try {
+    // Called after a due receipt is created — clears the balanceDue on the original part-payment receipt
+    const updated = await Receipt.findByIdAndUpdate(
+      req.params.id,
+      { $set: { balanceDue: 0 } },
+      { new: true }
+    );
+    if (!updated) return res.status(404).json({ message: 'Receipt not found' });
+    res.json(updated);
+  } catch(err) { next(err); }
+};
+
+exports.byRoom = async (req, res, next) => {
+  try {
+    const hostelId = await getHostelId(req);
+    const query = { roomNumber: parseInt(req.params.roomNumber) };
+    if (hostelId) query.hostelId = hostelId;
+    const receipts = await Receipt.find(query).sort({ receiptDate: -1 }).lean();
+    res.json(receipts);
+  } catch(err) { next(err); }
+};
+
+exports.roomSummary = async (req, res, next) => {
+  try {
+    const hostelId = await getHostelId(req);
+    const query = { roomNumber: parseInt(req.params.roomNumber) };
+    if (hostelId) query.hostelId = hostelId;
+    const receipts = await Receipt.find(query).sort({ receiptDate: -1 }).lean();
+    res.json({
+      totalPaid: receipts.reduce((s, r) => s + (r.totalAmount || 0), 0),
+      totalRent: receipts.filter(r => r.packageName === 'rent').reduce((s, r) => s + (r.totalAmount || 0), 0),
+      totalAdvance: receipts.filter(r => r.packageName === 'advance').reduce((s, r) => s + (r.totalAmount || 0), 0),
+      totalElectric: receipts.filter(r => r.packageName === 'electric').reduce((s, r) => s + (r.totalAmount || 0), 0),
+      receiptCount: receipts.length,
+      lastPayment: receipts[0] || null,
+      receipts,
+    });
   } catch(err) { next(err); }
 };
 
 exports.create = async (req, res, next) => {
+  const session = await mongoose.startSession();
+  session.startTransaction();
   try {
     const hostelId = await getHostelId(req);
-    if (!hostelId) return res.status(400).json({ message: 'No hostel assigned' });
-    
-    const { roomNumber, month, monthYear, memberName, memberMobile, packageName, totalAmount, amountPaid, modeOfPayment, notes } = req.body;
-    
+    if (!hostelId) { await session.abortTransaction(); return res.status(400).json({ message: 'No hostel assigned' }); }
+    const { roomNumber, totalAmount } = req.body;
     const errors = validate.collect([
       validate.required(roomNumber, 'Room number'),
-      validate.required(totalAmount, 'Total amount'),
-      validate.required(packageName, 'Package type'),
+      validate.required(totalAmount, 'Amount'),
+      validate.number(totalAmount, 'Amount'),
+      validate.positive(totalAmount, 'Amount'),
+      validate.positive(req.body.amountPaid, 'Amount paid'),
     ]);
-    if (errors.length) return res.status(400).json({ message: errors[0], errors });
-    
-    // Get next bill number
-    const year = new Date().getFullYear();
-    const shortYear = `${String(year).slice(2)}-${String(year + 1).slice(2)}`;
-    const last = await Receipt.findOne({ hostelId, billYear: shortYear }).sort({ billSerial: -1 });
-    const nextSerial = (last?.billSerial || 0) + 1;
-    const billNumber = `HBL/${shortYear}/${String(nextSerial).padStart(4, '0')}`;
-    
-    // Get room members
-    const members = await Member.find({ hostelId, roomNumber: parseInt(roomNumber), isActive: true }).select('name memberId mobileNo').lean();
-    
-    const receipt = new Receipt({
-      hostelId,
-      roomNumber: parseInt(roomNumber),
-      month,
-      monthYear,
-      memberName,
-      memberMobile,
-      members,
-      packageName,
-      paymentType: packageName,
-      totalAmount: Number(totalAmount),
-      amountPaid: Number(amountPaid) || 0,
-      balanceDue: Number(totalAmount) - (Number(amountPaid) || 0),
-      isPartPayment: Number(amountPaid) > 0 && Number(amountPaid) < Number(totalAmount),
-      modeOfPayment,
-      notes,
-      isPaid: Number(amountPaid) >= Number(totalAmount),
-      billNumber,
-      billYear: shortYear,
-      billSerial: nextSerial,
-      receiptDate: new Date(),
-    });
-    
-    const saved = await receipt.save();
-    
-    await audit.log({ hostelId, action: 'CREATE_RECEIPT', entity: 'receipt', entityId: saved._id, description: `Created receipt ${billNumber} for Room ${roomNumber}`, user: req.user });
-    await notify.create({ hostelId, type: 'receipt', title: `Receipt created for Room ${roomNumber}`, message: `₹${totalAmount}`, memberId: null, roomNumber: parseInt(roomNumber), priority: 'low' });
-    
+    if (errors.length) { await session.abortTransaction(); return res.status(400).json({ message: errors[0], errors }); }
+
+    // If no usable receipt number came from the client, compute the next
+    // sequential one server-side so a save never silently falls back to "1".
+    let receiptNumber = parseInt(req.body.receiptNumber);
+    if (!receiptNumber || isNaN(receiptNumber) || receiptNumber < 1) {
+      const last = await Receipt.findOne({ hostelId }).sort({ receiptNumber: -1 }).session(session);
+      receiptNumber = last ? (last.receiptNumber || 0) + 1 : 1;
+    }
+
+    const [saved] = await Receipt.create([{ ...req.body, hostelId, receiptNumber }], { session });
+    await audit.log({ hostelId, action: 'CREATE_RECEIPT', entity: 'receipt', entityId: saved._id, description: `Receipt ${saved.billNumber} Room ${roomNumber} ₹${totalAmount}`, user: req.user });
+    await notify.create({ hostelId, type: 'payment_received', title: `Payment: Room ${roomNumber}`, message: `₹${totalAmount} received (${req.body.packageName || 'payment'})`, roomNumber: parseInt(roomNumber), priority: 'low', amount: parseFloat(totalAmount) });
+    await session.commitTransaction();
     res.status(201).json(saved);
-  } catch(err) { next(err); }
+  } catch(err) { await session.abortTransaction(); next(err); }
+  finally { session.endSession(); }
 };
 
 exports.update = async (req, res, next) => {
   try {
-    const existing = await Receipt.findById(req.params.id);
-    if (!existing) return res.status(404).json({ message: 'Receipt not found' });
-    
-    const { amountPaid, modeOfPayment, notes } = req.body;
-    
-    const totalAmount = existing.totalAmount;
-    const newAmountPaid = amountPaid !== undefined ? Number(amountPaid) : existing.amountPaid;
-    const newBalanceDue = totalAmount - newAmountPaid;
-    
-    Object.assign(existing, {
-      amountPaid: newAmountPaid,
-      balanceDue: Math.max(0, newBalanceDue),
-      isPartPayment: newAmountPaid > 0 && newAmountPaid < totalAmount,
-      isPaid: newAmountPaid >= totalAmount,
-      modeOfPayment: modeOfPayment || existing.modeOfPayment,
-      notes: notes !== undefined ? notes : existing.notes,
-    });
-    
-    const updated = await existing.save();
-    
-    await audit.log({ hostelId: existing.hostelId, action: 'UPDATE_RECEIPT', entity: 'receipt', entityId: updated._id, description: `Updated receipt ${existing.billNumber}`, user: req.user });
-    
-    res.json(updated);
+    const receipt = await Receipt.findById(req.params.id);
+    if (!receipt) return res.status(404).json({ message: 'Receipt not found' });
+
+    const { totalAmount } = req.body;
+    const errors = validate.collect([
+      totalAmount !== undefined ? validate.required(totalAmount, 'Amount') : null,
+      totalAmount !== undefined ? validate.number(totalAmount, 'Amount') : null,
+      totalAmount !== undefined ? validate.positive(totalAmount, 'Amount') : null,
+    ]);
+    if (errors.length) return res.status(400).json({ message: errors[0], errors });
+
+    // Only touch fields that were actually sent — never let a partial edit
+    // payload wipe out fields (like hostelId) it didn't intend to change.
+    const editable = [
+      'receiptNumber', 'billNumber', 'billYear', 'billSerial', 'roomNumber', 'month', 'monthYear',
+      'memberName', 'memberMobile', 'memberId', 'members',
+      'packageName', 'paymentType', 'fromDate', 'toDate',
+      'totalAmount', 'amountPaid', 'isPartPayment', 'electricAmount',
+      'amountInWords', 'modeOfPayment', 'receiptDate', 'notes',
+    ];
+    editable.forEach(k => { if (req.body[k] !== undefined) receipt[k] = req.body[k]; });
+
+    // The pre-save hook on the Receipt model recalculates amountPaid/balanceDue
+    // from isPartPayment + totalAmount/amountPaid, so edits to a part-payment
+    // (or converting one to fully-paid) stay consistent automatically.
+    await receipt.save();
+    await audit.log({ hostelId: receipt.hostelId, action: 'UPDATE_RECEIPT', entity: 'receipt', entityId: receipt._id, description: `Edited receipt ${receipt.billNumber} Room ${receipt.roomNumber}`, user: req.user });
+    res.json(receipt);
   } catch(err) { next(err); }
 };
 
@@ -164,59 +196,7 @@ exports.remove = async (req, res, next) => {
   try {
     const receipt = await Receipt.findByIdAndDelete(req.params.id);
     if (!receipt) return res.status(404).json({ message: 'Receipt not found' });
-    
-    await audit.log({ hostelId: receipt.hostelId, action: 'DELETE_RECEIPT', entity: 'receipt', entityId: receipt._id, description: `Deleted receipt ${receipt.billNumber}`, user: req.user });
-    
-    res.json({ message: 'Receipt deleted', id: receipt._id });
-  } catch(err) { next(err); }
-};
-
-exports.byRoom = async (req, res, next) => {
-  try {
-    const hostelId = await getHostelId(req);
-    const roomNumber = parseInt(req.params.roomNumber);
-    const page = Math.max(1, parseInt(req.query.page) || 1);
-    const limit = Math.min(500, parseInt(req.query.limit) || 50);
-    const skip = (page - 1) * limit;
-    
-    const [data, total] = await Promise.all([
-      Receipt.find({ hostelId, roomNumber }).sort({ receiptDate: -1 }).skip(skip).limit(limit).lean(),
-      Receipt.countDocuments({ hostelId, roomNumber }),
-    ]);
-    
-    res.json({ data, total, page, pages: Math.ceil(total / limit), limit });
-  } catch(err) { next(err); }
-};
-
-exports.roomSummary = async (req, res, next) => {
-  try {
-    const hostelId = await getHostelId(req);
-    const roomNumber = parseInt(req.params.roomNumber);
-    
-    const receipts = await Receipt.find({ hostelId, roomNumber }).sort({ receiptDate: -1 }).lean();
-    
-    const totalCollected = receipts.reduce((sum, r) => sum + (r.amountPaid || 0), 0);
-    const totalDue = receipts.reduce((sum, r) => sum + (r.balanceDue || 0), 0);
-    const lastReceipt = receipts[0] || null;
-    
-    res.json({ roomNumber, totalCollected, totalDue, lastReceipt, totalReceipts: receipts.length });
-  } catch(err) { next(err); }
-};
-
-exports.clearDue = async (req, res, next) => {
-  try {
-    const receipt = await Receipt.findById(req.params.id);
-    if (!receipt) return res.status(404).json({ message: 'Receipt not found' });
-    
-    receipt.balanceDue = 0;
-    receipt.amountPaid = receipt.totalAmount;
-    receipt.isPaid = true;
-    receipt.isPartPayment = false;
-    
-    const updated = await receipt.save();
-    
-    await audit.log({ hostelId: receipt.hostelId, action: 'CLEAR_DUE', entity: 'receipt', entityId: updated._id, description: `Cleared due for receipt ${receipt.billNumber}`, user: req.user });
-    
-    res.json(updated);
+    await audit.log({ hostelId: receipt.hostelId, action: 'DELETE_RECEIPT', entity: 'receipt', entityId: receipt._id, description: `Deleted receipt ${receipt.billNumber} Room ${receipt.roomNumber}`, user: req.user });
+    res.json({ message: 'Deleted' });
   } catch(err) { next(err); }
 };

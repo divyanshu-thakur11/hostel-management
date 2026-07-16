@@ -147,43 +147,58 @@ export default function DuesAndPayments() {
     .map(r => {
       const rNum = r.roomNumber;
       const roomActiveMembers = members.filter(m => m.roomNumber === rNum && m.isActive !== false);
-      const memberRentSum = roomActiveMembers.reduce((s, m) => s + (m.rent || 0), 0);
-      // Fall back to the Room config's rent only if no member has a rent set yet.
-      const fixedRent = memberRentSum || r.rent || 0;
-
-      const monthStart = new Date(curYr, curMon - 1, 1, 0, 0, 0, 0);
-      const monthEnd   = new Date(curYr, curMon, 0, 23, 59, 59, 999);
+      // Rent is charged per ROOM, not per occupant — every member sharing a
+      // room typically carries the same rent value on their profile (it's
+      // auto-filled from Room settings). Summing them was doubling (or worse)
+      // the real due for any room with more than one active member; take the
+      // highest single value instead, which is the room's actual rent.
+      const memberRents = roomActiveMembers.map(m => m.rent || 0).filter(v => v > 0);
+      const fixedRent = memberRents.length ? Math.max(...memberRents) : (r.rent || 0);
 
       // A receipt "counts toward this month's rent" if the period it actually
       // covers (fromDate → toDate, the validity dates chosen when it was made)
-      // overlaps the current calendar month — NOT simply if it was created
+      // includes the current calendar month — NOT simply if it was created
       // (receiptDate) sometime this month. This matters a lot in practice:
       // someone paying on 28 June for their July stay should have that payment
       // count for July, and someone catching up on an old unpaid June with a
       // receipt dated in July should NOT have that show up as "July paid".
       // Only receipts with no validity dates at all (older/manual entries)
       // fall back to the old receiptDate-based match.
+      // Compared by plain (year, month) pairs — not Date-object ranges — so
+      // there's no ambiguity at month boundaries.
+      const monthKey = curYr * 12 + (curMon - 1); // e.g. July 2026 -> a single comparable integer
+      const toMonthKey = (d) => { const dt = new Date(d); return dt.getFullYear() * 12 + dt.getMonth(); };
       const roomReceiptsThisMonth = receipts.filter(rec => {
         if (rec.roomNumber !== rNum) return false;
         if (rec.fromDate || rec.toDate) {
-          const from = rec.fromDate ? new Date(rec.fromDate) : monthStart;
-          const to   = rec.toDate   ? new Date(rec.toDate)   : monthEnd;
-          return from <= monthEnd && to >= monthStart;
+          const fromKey = rec.fromDate ? toMonthKey(rec.fromDate) : monthKey;
+          const toKey   = rec.toDate   ? toMonthKey(rec.toDate)   : monthKey;
+          return fromKey <= monthKey && toKey >= monthKey;
         }
-        return rec.receiptDate &&
-          new Date(rec.receiptDate).getMonth() + 1 === curMon &&
-          new Date(rec.receiptDate).getFullYear() === curYr;
+        return rec.receiptDate && toMonthKey(rec.receiptDate) === monthKey;
       });
 
       // Rent paid = sum of ALL receipt types this month EXCEPT electric.
-      // Use amountPaid (not totalAmount) so part-payments are counted correctly.
-      // rent, advance, final, other all count toward clearing the month's rent due.
+      // For a 'final' bill (which bundles rent [+advance] and electric into
+      // one payment), only the non-electric share counts toward rent — and
+      // if it's a part payment, that share is scaled down by how much of the
+      // bill has actually been paid so far, so a half-paid final bill
+      // correctly leaves half of each component still due.
       const rentPaidThisMonth = roomReceiptsThisMonth
         .filter(rec => {
           const type = rec.packageName || rec.paymentType || '';
           return type !== 'electric';
         })
-        .reduce((s, rec) => s + (rec.amountPaid ?? rec.totalAmount ?? 0), 0);
+        .reduce((s, rec) => {
+          const paid  = rec.amountPaid ?? rec.totalAmount ?? 0;
+          const type  = rec.packageName || rec.paymentType || '';
+          if (type === 'final' && rec.electricAmount > 0 && rec.totalAmount > 0) {
+            const paidRatio  = paid / rec.totalAmount;
+            const rentShare  = rec.totalAmount - rec.electricAmount; // rent (+advance) portion of the bill
+            return s + (rentShare * paidRatio);
+          }
+          return s + paid;
+        }, 0);
 
       // Due = fixed rent minus whatever has been paid. If paid >= fixedRent, due = 0.
       // If advance was paid this month and exceeds rent, credit shows as 0 due (no negative).
@@ -199,18 +214,24 @@ export default function DuesAndPayments() {
         .filter(rec =>
           rec.roomNumber === rNum &&
           (rec.packageName === 'electric' || rec.paymentType === 'electric') &&
-          rec.receiptDate &&
-          new Date(rec.receiptDate).getMonth() + 1 === curMon &&
-          new Date(rec.receiptDate).getFullYear() === curYr
+          rec.receiptDate && toMonthKey(rec.receiptDate) === monthKey
         )
         .reduce((s, rec) => s + (rec.amountPaid ?? rec.totalAmount ?? 0), 0);
-      // Electric also paid if a 'final' receipt this month includes it.
+      // Electric also paid if a 'final' receipt this month includes it — scaled
+      // by the same paid-ratio as above, so a part-paid final bill only credits
+      // the electric portion that's actually been received.
       const elecPaidInFinal = elecWaived ? 0 : roomReceiptsThisMonth
         .filter(rec => (rec.packageName === 'final' || rec.paymentType === 'final'))
         .reduce((s, rec) => {
-          if (rec.electricAmount && rec.electricAmount > 0) return s + rec.electricAmount;
-          const m = (rec.notes || '').match(/Electric\s+[\w]+:\s*₹([\d,]+)/);
-          return s + (m ? parseInt(m[1].replace(/,/g, '')) : 0);
+          let elecAmt = rec.electricAmount;
+          if (!(elecAmt > 0)) {
+            const m = (rec.notes || '').match(/Electric\s*(?:[\w]+)?\s*:?\s*₹([\d,]+)/);
+            elecAmt = m ? parseInt(m[1].replace(/,/g, '')) : 0;
+          }
+          if (!(elecAmt > 0)) return s;
+          const paid = rec.amountPaid ?? rec.totalAmount ?? 0;
+          const paidRatio = rec.totalAmount > 0 ? paid / rec.totalAmount : 1;
+          return s + (elecAmt * paidRatio);
         }, 0);
       // If reading is marked paid directly on the reading object, treat as fully paid
       const elecDirectlyPaid = !elecWaived && elecReading?.paymentStatus === 'paid' ? elecTotal : 0;
@@ -250,16 +271,13 @@ export default function DuesAndPayments() {
   //      current calendar month (1st through the last day), whether overdue or upcoming.
   // Each row also carries the member's start–end validity dates for that room.
   const roomsDueThisMonth = (() => {
-    const monthStart = new Date(curYr, curMon - 1, 1, 0, 0, 0, 0);
-    const monthEnd   = new Date(curYr, curMon, 0, 23, 59, 59, 999); // last day of this month (30/31)
-
     const roomNumbers = new Set();
     roomDues.forEach(r => { if (r.totalDue > 0) roomNumbers.add(r.roomNumber); });
     members
       .filter(m => m.isActive !== false && m.roomNumber && m.roomLeavingDate)
       .forEach(m => {
         const ld = new Date(m.roomLeavingDate);
-        if (ld >= monthStart && ld <= monthEnd) roomNumbers.add(m.roomNumber);
+        if (ld.getFullYear() === curYr && ld.getMonth() + 1 === curMon) roomNumbers.add(m.roomNumber);
       });
 
     return Array.from(roomNumbers).sort((a, b) => a - b).map(rn => {

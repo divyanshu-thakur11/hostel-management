@@ -25,6 +25,9 @@ const EMPTY = {
   totalAmount:'', amountPaid:'', balanceDue:'0', isPartPayment:false, electricAmount:0,
   modeOfPayment:'cash', notes:'',
   receiptDate: new Date().toISOString().split('T')[0],
+  // Final Bill breakdown — which components make it up, and their individual values
+  finalBillType: 'rent_electric', // 'rent_electric' | 'advance_electric_rent'
+  finalRentAmt: '', finalElectricAmt: '', finalAdvanceAmt: '',
 };
 
 const selStyle = { background:'var(--bg3)', border:'1px solid var(--border)', borderRadius:6, padding:'8px 10px', color:'var(--text)', outline:'none', fontSize:'0.88rem' };
@@ -158,33 +161,36 @@ export default function Receipts() {
     }
 
     if (pkg === 'final' && form.roomNumber && billingMonth) {
-      // Final = rent (current month) + electric (current month only) + pending balances
+      // Final bill is now built from explicit components the user confirms —
+      // Rent + Electric, or Advance + Electric + Rent — rather than one
+      // silently-computed lump sum. We just prefill sensible suggestions;
+      // recomputeFinalTotal() below does the actual summing whenever the
+      // person edits any component, and dues adjust based on what's really
+      // in the bill (see electricAmount sent with the receipt).
       try {
         const [year, month] = (billingMonth || '').split('-').map(Number);
         const fixedRent = roomConfig?.rent || 0;
+        const fixedAdvance = roomConfig?.advance || 0;
 
-        // Get this month's electric only
         let electricAmt = 0;
-        let electricNote = '';
         if (year && month) {
           const eRes = await electricAPI.getByRoom(form.roomNumber);
           const readings = eRes.data?.data || eRes.data || [];
           const thisMonthElec = readings.find(r => r.year === year && r.month === month);
-          if (thisMonthElec) {
-            electricAmt = thisMonthElec.totalAmount || 0;
-            electricNote = ` + Electric ${MONTHS[month-1]}: ₹${electricAmt}`;
-          }
+          if (thisMonthElec) electricAmt = thisMonthElec.totalAmount || 0;
         }
 
-        // Pending balances from part payments
-        const rRes = await receiptsAPI.getAll({ room: form.roomNumber, limit: 500 });
-        const rList = rRes.data?.data || rRes.data || [];
-        const pendingBalance = rList.reduce((s,r) => s + (r.balanceDue || 0), 0);
-
-        amount = String(fixedRent + electricAmt + pendingBalance);
-        notes = `Final Bill: Rent ₹${fixedRent}${electricNote}${pendingBalance > 0 ? ` + Pending ₹${pendingBalance}` : ''}`;
-        // FIX 5: store electricAmount explicitly on form so it's sent to server
-        setForm(p => ({ ...p, packageName: pkg, totalAmount: amount, notes, electricAmount: electricAmt }));
+        setForm(p => ({
+          ...p,
+          packageName: pkg,
+          finalBillType: 'rent_electric',
+          finalRentAmt: String(fixedRent || ''),
+          finalElectricAmt: String(electricAmt || ''),
+          finalAdvanceAmt: String(fixedAdvance || ''),
+          totalAmount: String(fixedRent + electricAmt),
+          electricAmount: electricAmt,
+          notes: `Final Bill: Rent ₹${fixedRent} + Electric ₹${electricAmt}`,
+        }));
         return;
       } catch(e) {}
     }
@@ -195,6 +201,27 @@ export default function Receipts() {
     }
 
     setForm(p => ({ ...p, packageName: pkg, totalAmount: amount, notes, electricAmount: 0 }));
+  };
+
+  // Recompute the Final Bill's total whenever the type or any component value changes.
+  const recomputeFinalTotal = (patch) => {
+    setForm(p => {
+      const next = { ...p, ...patch };
+      const rent     = parseFloat(next.finalRentAmt)     || 0;
+      const electric = parseFloat(next.finalElectricAmt) || 0;
+      const advance  = next.finalBillType === 'advance_electric_rent' ? (parseFloat(next.finalAdvanceAmt) || 0) : 0;
+      const total = rent + electric + advance;
+      const notes = next.finalBillType === 'advance_electric_rent'
+        ? `Final Bill: Advance ₹${advance} + Electric ₹${electric} + Rent ₹${rent}`
+        : `Final Bill: Rent ₹${rent} + Electric ₹${electric}`;
+      return {
+        ...next,
+        totalAmount: String(total),
+        amountPaid: next.isPartPayment ? next.amountPaid : String(total),
+        electricAmount: electric,
+        notes,
+      };
+    });
   };
 
   // ── Part payment recalc ───────────────────────────────────────────────────
@@ -351,6 +378,13 @@ export default function Receipts() {
       electricAmount: r.electricAmount || 0,
       modeOfPayment: r.modeOfPayment || 'cash',
       notes: r.notes || '',
+      // Best-effort reconstruction of the Final Bill breakdown for editing —
+      // only electricAmount is stored on the receipt itself, so the rest is
+      // inferred as "whatever isn't electric" going into Rent.
+      finalBillType: (r.notes || '').includes('Advance') ? 'advance_electric_rent' : 'rent_electric',
+      finalElectricAmt: String(r.electricAmount || ''),
+      finalRentAmt: String(Math.max(0, (r.totalAmount || 0) - (r.electricAmount || 0))),
+      finalAdvanceAmt: '',
       receiptDate: r.receiptDate ? r.receiptDate.split('T')[0] : new Date().toISOString().split('T')[0],
     });
     setShowModal(true);
@@ -618,6 +652,44 @@ export default function Receipts() {
                   </select>
                 </div>
 
+                {/* Final Bill breakdown — user picks the combination, then confirms each value */}
+                {form.packageName === 'final' && (
+                  <div className="form-group full">
+                    <label>Final Bill Made Of</label>
+                    <div style={{display:'flex',gap:8,marginBottom:10,flexWrap:'wrap'}}>
+                      <button type="button"
+                        className={`btn btn-xs ${form.finalBillType==='rent_electric' ? 'btn-primary' : 'btn-secondary'}`}
+                        onClick={()=>recomputeFinalTotal({ finalBillType:'rent_electric' })}>
+                        Rent + Electric
+                      </button>
+                      <button type="button"
+                        className={`btn btn-xs ${form.finalBillType==='advance_electric_rent' ? 'btn-primary' : 'btn-secondary'}`}
+                        onClick={()=>recomputeFinalTotal({ finalBillType:'advance_electric_rent' })}>
+                        Advance + Electric + Rent
+                      </button>
+                    </div>
+                    <div style={{display:'grid',gridTemplateColumns:form.finalBillType==='advance_electric_rent'?'1fr 1fr 1fr':'1fr 1fr',gap:10}}>
+                      {form.finalBillType === 'advance_electric_rent' && (
+                        <div>
+                          <label style={{fontSize:'0.72rem',color:'var(--text3)'}}>Advance (₹)</label>
+                          <input type="number" value={form.finalAdvanceAmt} onChange={e=>recomputeFinalTotal({ finalAdvanceAmt:e.target.value })} placeholder="0" />
+                        </div>
+                      )}
+                      <div>
+                        <label style={{fontSize:'0.72rem',color:'var(--text3)'}}>Electric (₹)</label>
+                        <input type="number" value={form.finalElectricAmt} onChange={e=>recomputeFinalTotal({ finalElectricAmt:e.target.value })} placeholder="0" />
+                      </div>
+                      <div>
+                        <label style={{fontSize:'0.72rem',color:'var(--text3)'}}>Rent (₹)</label>
+                        <input type="number" value={form.finalRentAmt} onChange={e=>recomputeFinalTotal({ finalRentAmt:e.target.value })} placeholder="0" />
+                      </div>
+                    </div>
+                    <div style={{marginTop:8,fontSize:'0.78rem',color:'var(--text2)'}}>
+                      Total: <strong>₹{(parseFloat(form.totalAmount)||0).toLocaleString('en-IN')}</strong> — dues for rent and electric will be reduced by exactly these amounts (or their paid share, if this is a part payment).
+                    </div>
+                  </div>
+                )}
+
                 {/* Mode */}
                 <div className="form-group">
                   <label>Payment Mode</label>
@@ -636,8 +708,11 @@ export default function Receipts() {
 
                 {/* Amount */}
                 <div className="form-group">
-                  <label>Total Amount (₹)</label>
+                  <label>Total Amount (₹){form.packageName==='final' && <span style={{color:'var(--text3)',fontWeight:400}}> (from components above)</span>}</label>
                   <input type="number" value={form.totalAmount}
+                    readOnly={form.packageName==='final'}
+                    disabled={form.packageName==='final'}
+                    style={form.packageName==='final' ? {opacity:0.75,cursor:'not-allowed'} : undefined}
                     onChange={e=>setForm(p=>({...p, totalAmount:e.target.value, amountPaid:p.isPartPayment?p.amountPaid:e.target.value}))}
                     placeholder="Auto-filled from room config" />
                 </div>

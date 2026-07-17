@@ -47,14 +47,25 @@ export default function Electric() {
   // via a direct 'electric' receipt, or the electric portion of a 'final' bill.
   const getPaidForReading = (reading) => {
     if (reading.paymentStatus === 'waived') return 0;
+    // Match by the receipt's actual billing month (monthYear, e.g. "2026-07")
+    // rather than the day it was created — a bill settled a few days late,
+    // crossing into the next calendar month, should still count. Older
+    // receipts made before monthYear was captured fall back to receiptDate.
+    const readingMonthYear = `${reading.year}-${String(reading.month).padStart(2, '0')}`;
+    const isForThisReading = (rec) => rec.monthYear
+      ? rec.monthYear === readingMonthYear
+      : (rec.receiptDate && new Date(rec.receiptDate).getMonth() + 1 === reading.month && new Date(rec.receiptDate).getFullYear() === reading.year);
     const direct = receipts
-      .filter(rec => (rec.packageName === 'electric' || rec.paymentType === 'electric') &&
-        rec.receiptDate && new Date(rec.receiptDate).getMonth() + 1 === reading.month && new Date(rec.receiptDate).getFullYear() === reading.year)
+      .filter(rec => (rec.packageName === 'electric' || rec.paymentType === 'electric') && isForThisReading(rec))
       .reduce((s, rec) => s + (rec.amountPaid ?? rec.totalAmount ?? 0), 0);
     const inFinal = receipts
-      .filter(rec => (rec.packageName === 'final' || rec.paymentType === 'final') &&
-        rec.receiptDate && new Date(rec.receiptDate).getMonth() + 1 === reading.month && new Date(rec.receiptDate).getFullYear() === reading.year)
-      .reduce((s, rec) => s + (rec.electricAmount > 0 ? rec.electricAmount : 0), 0);
+      .filter(rec => (rec.packageName === 'final' || rec.paymentType === 'final') && isForThisReading(rec))
+      .reduce((s, rec) => {
+        if (!(rec.electricAmount > 0)) return s;
+        const paid = rec.amountPaid ?? rec.totalAmount ?? 0;
+        const ratio = rec.totalAmount > 0 ? paid / rec.totalAmount : 1;
+        return s + (rec.electricAmount * ratio);
+      }, 0);
     return direct + inFinal;
   };
 

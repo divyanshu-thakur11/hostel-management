@@ -244,6 +244,17 @@ export default function Receipts() {
     if (!form.roomNumber) { toast('Please select a room', 'error'); return; }
     if (!form.totalAmount) { toast('Please enter amount', 'error'); return; }
 
+    const RENT_PERIOD_TYPES = ['rent', 'advance', 'final'];
+    if (RENT_PERIOD_TYPES.includes(form.packageName) && !form.toDate) {
+      const proceed = window.confirm(
+        "You haven't set a 'To Date' (validity end) for this receipt.\n\n" +
+        "Rooms & Dues tracks whether rent is paid using this date — without it, " +
+        "this member may keep showing as due even after this payment.\n\n" +
+        'Save anyway?'
+      );
+      if (!proceed) return;
+    }
+
     const amountPaid = form.isPartPayment ? (parseFloat(form.amountPaid) || 0) : (parseFloat(form.totalAmount) || 0);
     const balanceDue = Math.max(0, (parseFloat(form.totalAmount) || 0) - amountPaid);
 
@@ -267,12 +278,23 @@ export default function Receipts() {
       receiptNumber:  parseInt(form.receiptNumber) || 1,
       billSerial:     parseInt(form.billSerial) || 1,
       electricAmount: parseFloat(form.electricAmount) || 0,
+      // The billing month picked in the form — this is the real "which month
+      // is this receipt for" signal (used to match electric payments to the
+      // right month's due). Was being collected but never actually saved.
+      monthYear:      form.billingMonth || '',
+      // Final Bill breakdown, stored so editing later doesn't have to guess
+      // rent vs advance from "whatever isn't electric".
+      rentComponent:    form.packageName === 'final' ? (parseFloat(form.finalRentAmt) || 0) : undefined,
+      advanceComponent: form.packageName === 'final' && form.finalBillType === 'advance_electric_rent' ? (parseFloat(form.finalAdvanceAmt) || 0) : undefined,
     };
 
     try {
       if (editingReceipt) {
         const res = await receiptsAPI.update(editingReceipt._id, payload);
-        toast(`Receipt updated${form.isPartPayment ? ` · Balance: ₹${balanceDue}` : ''}`);
+        toast(res.data?.duplicateReceiptNumberWarning
+          ? `⚠ Receipt updated — but #${res.data.receiptNumber} is also used by another receipt`
+          : `Receipt updated${form.isPartPayment ? ` · Balance: ₹${balanceDue}` : ''}`,
+          res.data?.duplicateReceiptNumberWarning ? 'warning' : undefined);
         setShowModal(false);
         setEditingReceipt(null);
         loadReceipts(page);
@@ -280,12 +302,20 @@ export default function Receipts() {
         return;
       }
       const res = await receiptsAPI.create(payload);
-      // Auto-update roomLeavingDate for members if toDate given
-      if (form.toDate) {
+      // Auto-update roomLeavingDate for members if toDate given — but only for
+      // receipt types that actually represent a rent/stay period. An electric
+      // bill has nothing to do with how long someone's rent is paid for, so it
+      // must never push this date forward (that would make rent look paid
+      // when only electricity was).
+      const RENT_PERIOD_TYPES = ['rent', 'advance', 'final'];
+      if (form.toDate && RENT_PERIOD_TYPES.includes(form.packageName)) {
         const toUpdate = isAll ? roomMembers : roomMembers.filter(m => m.name === form.memberName);
         await Promise.all(toUpdate.map(m => membersAPI.update(m._id, { roomLeavingDate: form.toDate }).catch(()=>{})));
       }
-      toast(`Receipt created${form.isPartPayment ? ` · Balance: ₹${balanceDue}` : ''}`);
+      toast(res.data?.duplicateReceiptNumberWarning
+        ? `⚠ Receipt created — but #${res.data.receiptNumber} is also used by another receipt`
+        : `Receipt created${form.isPartPayment ? ` · Balance: ₹${balanceDue}` : ''}`,
+        res.data?.duplicateReceiptNumberWarning ? 'warning' : undefined);
       setShowModal(false);
       loadReceipts(page);
       setShowPrint(res.data);
@@ -378,13 +408,13 @@ export default function Receipts() {
       electricAmount: r.electricAmount || 0,
       modeOfPayment: r.modeOfPayment || 'cash',
       notes: r.notes || '',
-      // Best-effort reconstruction of the Final Bill breakdown for editing —
-      // only electricAmount is stored on the receipt itself, so the rest is
-      // inferred as "whatever isn't electric" going into Rent.
-      finalBillType: (r.notes || '').includes('Advance') ? 'advance_electric_rent' : 'rent_electric',
+      // Final Bill breakdown — uses the actual stored components when present
+      // (receipts created after this fix); falls back to a best-effort guess
+      // for older receipts that predate rentComponent/advanceComponent.
+      finalBillType: (r.advanceComponent > 0 || (r.notes || '').includes('Advance')) ? 'advance_electric_rent' : 'rent_electric',
       finalElectricAmt: String(r.electricAmount || ''),
-      finalRentAmt: String(Math.max(0, (r.totalAmount || 0) - (r.electricAmount || 0))),
-      finalAdvanceAmt: '',
+      finalRentAmt: String(r.rentComponent != null ? r.rentComponent : Math.max(0, (r.totalAmount || 0) - (r.electricAmount || 0))),
+      finalAdvanceAmt: String(r.advanceComponent || ''),
       receiptDate: r.receiptDate ? r.receiptDate.split('T')[0] : new Date().toISOString().split('T')[0],
     });
     setShowModal(true);

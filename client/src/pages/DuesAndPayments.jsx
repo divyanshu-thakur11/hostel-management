@@ -188,20 +188,30 @@ export default function DuesAndPayments() {
       // Waived bills are written off — zero due, zero income
       const elecWaived  = elecReading?.paymentStatus === 'waived';
       const elecTotal   = (elecWaived ? 0 : elecReading?.totalAmount) || 0;
-      // Electric paid this month — via explicit electric receipts made this month
+
+      // A receipt counts toward THIS month's electric bill if it was actually
+      // billed for this month (monthYear, e.g. "2026-07" — the Billing Month
+      // picked when the receipt was made), not just because it happened to be
+      // created sometime this month. Older receipts made before this field was
+      // captured fall back to receiptDate as a best effort.
+      const curMonthYearStr = `${curYr}-${String(curMon).padStart(2, '0')}`;
+      const isForThisMonth = (rec) => rec.monthYear
+        ? rec.monthYear === curMonthYearStr
+        : (rec.receiptDate && toMonthKey(rec.receiptDate) === monthKey);
+
+      // Electric paid this month — via explicit electric receipts billed for this month
       const elecPaidDirect = elecWaived ? 0 : receipts
         .filter(rec =>
           rec.roomNumber === rNum &&
           (rec.packageName === 'electric' || rec.paymentType === 'electric') &&
-          rec.receiptDate && toMonthKey(rec.receiptDate) === monthKey
+          isForThisMonth(rec)
         )
         .reduce((s, rec) => s + (rec.amountPaid ?? rec.totalAmount ?? 0), 0);
-      // Electric also paid if a 'final' receipt made this month includes it —
+      // Electric also paid if a 'final' receipt billed for this month includes it —
       // scaled by how much of that bill has actually been paid, so a part-paid
       // final bill only credits the electric portion actually received.
       const elecPaidInFinal = elecWaived ? 0 : receipts
-        .filter(rec => rec.roomNumber === rNum && (rec.packageName === 'final' || rec.paymentType === 'final') &&
-          rec.receiptDate && toMonthKey(rec.receiptDate) === monthKey)
+        .filter(rec => rec.roomNumber === rNum && (rec.packageName === 'final' || rec.paymentType === 'final') && isForThisMonth(rec))
         .reduce((s, rec) => {
           let elecAmt = rec.electricAmount;
           if (!(elecAmt > 0)) {
@@ -874,11 +884,22 @@ export default function DuesAndPayments() {
                     </thead>
                     <tbody>
                       {elecHistoryData.map(r => {
+                        const readingMonthYear = `${r.year}-${String(r.month).padStart(2, '0')}`;
+                        const isForThisReading = (rec) => rec.monthYear
+                          ? rec.monthYear === readingMonthYear
+                          : (rec.receiptDate && new Date(rec.receiptDate).getMonth()+1===r.month && new Date(rec.receiptDate).getFullYear()===r.year);
                         const paid = r.paymentStatus === 'waived' ? 0 : receipts
                           .filter(rec => rec.roomNumber === elecHistoryRoom &&
                             ((rec.packageName==='electric'||rec.paymentType==='electric') || (rec.packageName==='final'||rec.paymentType==='final')) &&
-                            rec.receiptDate && new Date(rec.receiptDate).getMonth()+1===r.month && new Date(rec.receiptDate).getFullYear()===r.year)
-                          .reduce((s,rec) => s + ((rec.packageName==='final'||rec.paymentType==='final') ? (rec.electricAmount>0?rec.electricAmount:0) : (rec.amountPaid ?? rec.totalAmount ?? 0)), 0);
+                            isForThisReading(rec))
+                          .reduce((s,rec) => {
+                            const isFinal = rec.packageName==='final'||rec.paymentType==='final';
+                            if (!isFinal) return s + (rec.amountPaid ?? rec.totalAmount ?? 0);
+                            if (!(rec.electricAmount > 0)) return s;
+                            const paidAmt = rec.amountPaid ?? rec.totalAmount ?? 0;
+                            const ratio = rec.totalAmount > 0 ? paidAmt / rec.totalAmount : 1;
+                            return s + (rec.electricAmount * ratio);
+                          }, 0);
                         const status = r.paymentStatus === 'waived' ? 'waived' : (paid >= (r.totalAmount||0) && (r.totalAmount||0) > 0 ? 'paid' : paid > 0 ? 'partial' : 'unpaid');
                         return (
                           <tr key={r._id} style={status==='waived'?{opacity:0.6}:{}}>

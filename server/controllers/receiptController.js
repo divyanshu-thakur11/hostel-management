@@ -151,10 +151,15 @@ exports.create = async (req, res, next) => {
     }
 
     const [saved] = await Receipt.create([{ ...req.body, hostelId, receiptNumber }], { session });
+    // Soft duplicate check — never blocks the save (the person may genuinely
+    // want to reuse/renumber), just flags it so the UI can warn.
+    const dupCount = await Receipt.countDocuments({ hostelId, receiptNumber, _id: { $ne: saved._id } }).session(session);
     await audit.log({ hostelId, action: 'CREATE_RECEIPT', entity: 'receipt', entityId: saved._id, description: `Receipt ${saved.billNumber} Room ${roomNumber} ₹${totalAmount}`, user: req.user });
     await notify.create({ hostelId, type: 'payment_received', title: `Payment: Room ${roomNumber}`, message: `₹${totalAmount} received (${req.body.packageName || 'payment'})`, roomNumber: parseInt(roomNumber), priority: 'low', amount: parseFloat(totalAmount) });
     await session.commitTransaction();
-    res.status(201).json(saved);
+    const savedObj = saved.toObject();
+    if (dupCount > 0) savedObj.duplicateReceiptNumberWarning = true;
+    res.status(201).json(savedObj);
   } catch(err) { await session.abortTransaction(); next(err); }
   finally { session.endSession(); }
 };
@@ -179,6 +184,7 @@ exports.update = async (req, res, next) => {
       'memberName', 'memberMobile', 'memberId', 'members',
       'packageName', 'paymentType', 'fromDate', 'toDate',
       'totalAmount', 'amountPaid', 'isPartPayment', 'electricAmount',
+      'rentComponent', 'advanceComponent',
       'amountInWords', 'modeOfPayment', 'receiptDate', 'notes',
     ];
     editable.forEach(k => { if (req.body[k] !== undefined) receipt[k] = req.body[k]; });
@@ -187,8 +193,12 @@ exports.update = async (req, res, next) => {
     // from isPartPayment + totalAmount/amountPaid, so edits to a part-payment
     // (or converting one to fully-paid) stay consistent automatically.
     await receipt.save();
+    // Soft duplicate check — never blocks the save, just flags it for the UI.
+    const dupCount = await Receipt.countDocuments({ hostelId: receipt.hostelId, receiptNumber: receipt.receiptNumber, _id: { $ne: receipt._id } });
     await audit.log({ hostelId: receipt.hostelId, action: 'UPDATE_RECEIPT', entity: 'receipt', entityId: receipt._id, description: `Edited receipt ${receipt.billNumber} Room ${receipt.roomNumber}`, user: req.user });
-    res.json(receipt);
+    const receiptObj = receipt.toObject();
+    if (dupCount > 0) receiptObj.duplicateReceiptNumberWarning = true;
+    res.json(receiptObj);
   } catch(err) { next(err); }
 };
 

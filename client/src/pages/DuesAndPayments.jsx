@@ -188,6 +188,11 @@ export default function DuesAndPayments() {
       // Waived bills are written off — zero due, zero income
       const elecWaived  = elecReading?.paymentStatus === 'waived';
       const elecTotal   = (elecWaived ? 0 : elecReading?.totalAmount) || 0;
+      // A deliberate Mark Paid / Mark Unpaid (manualOverride) is trusted as-is
+      // and skips the receipt-based calculation entirely — this is what lets
+      // a misclick get corrected without it reverting on the next recalculation.
+      const elecManualPaid   = !elecWaived && elecReading?.manualOverride && elecReading?.paymentStatus === 'paid';
+      const elecManualUnpaid = !elecWaived && elecReading?.manualOverride && elecReading?.paymentStatus === 'unpaid';
 
       // A receipt counts toward THIS month's electric bill if it was actually
       // billed for this month (monthYear, e.g. "2026-07" — the Billing Month
@@ -200,7 +205,7 @@ export default function DuesAndPayments() {
         : (rec.receiptDate && toMonthKey(rec.receiptDate) === monthKey);
 
       // Electric paid this month — via explicit electric receipts billed for this month
-      const elecPaidDirect = elecWaived ? 0 : receipts
+      const elecPaidDirect = (elecWaived || elecManualUnpaid) ? 0 : receipts
         .filter(rec =>
           rec.roomNumber === rNum &&
           (rec.packageName === 'electric' || rec.paymentType === 'electric') &&
@@ -210,7 +215,7 @@ export default function DuesAndPayments() {
       // Electric also paid if a 'final' receipt billed for this month includes it —
       // scaled by how much of that bill has actually been paid, so a part-paid
       // final bill only credits the electric portion actually received.
-      const elecPaidInFinal = elecWaived ? 0 : receipts
+      const elecPaidInFinal = (elecWaived || elecManualUnpaid) ? 0 : receipts
         .filter(rec => rec.roomNumber === rNum && (rec.packageName === 'final' || rec.paymentType === 'final') && isForThisMonth(rec))
         .reduce((s, rec) => {
           let elecAmt = rec.electricAmount;
@@ -223,10 +228,10 @@ export default function DuesAndPayments() {
           const paidRatio = rec.totalAmount > 0 ? paid / rec.totalAmount : 1;
           return s + (elecAmt * paidRatio);
         }, 0);
-      // If reading is marked paid directly on the reading object, treat as fully paid
-      const elecDirectlyPaid = !elecWaived && elecReading?.paymentStatus === 'paid' ? elecTotal : 0;
-      const elecPaid = elecPaidDirect + elecPaidInFinal + elecDirectlyPaid;
-      const elecDue  = Math.max(0, elecTotal - elecPaid);
+      // If reading is marked paid (manually, or the older non-override 'paid' flag), treat as fully paid
+      const elecDirectlyPaid = (!elecWaived && !elecManualUnpaid && elecReading?.paymentStatus === 'paid') ? elecTotal : 0;
+      const elecPaid = elecManualUnpaid ? 0 : (elecPaidDirect + elecPaidInFinal + elecDirectlyPaid);
+      const elecDue  = elecManualPaid ? 0 : Math.max(0, elecTotal - elecPaid);
 
       return {
         roomNumber: rNum,
@@ -287,6 +292,7 @@ export default function DuesAndPayments() {
   // paid/unpaid/partial are always derived from actual receipts (see roomDues above).
   const getElecStatus = (elecReading, elecTotal, elecPaid) => {
     if (elecReading?.paymentStatus === 'waived') return 'waived';
+    if (elecReading?.manualOverride) return elecReading.paymentStatus === 'paid' ? 'paid' : 'unpaid';
     if (elecTotal > 0 && elecPaid >= elecTotal) return 'paid';
     if (elecPaid > 0) return 'partial';
     return 'unpaid';
@@ -307,10 +313,20 @@ export default function DuesAndPayments() {
 
   const restoreElec = async (reading) => {
     try {
-      await electricAPI.updatePaymentStatus(reading._id, { paymentStatus: 'unpaid', waivedReason: '' });
-      toast('Restored — status now follows receipts automatically');
+      await electricAPI.updatePaymentStatus(reading._id, { paymentStatus: 'unpaid', waivedReason: '', manualOverride: false });
+      toast('Reset — status now follows receipts automatically');
       load();
     } catch(e) { toast(e.response?.data?.message || 'Error restoring', 'error'); }
+  };
+
+  // Quick manual correction right from the dues table — e.g. fixing a misclick
+  // without having to go to the Electric page.
+  const markElecStatus = async (reading, status) => {
+    try {
+      await electricAPI.updatePaymentStatus(reading._id, { paymentStatus: status, waivedReason: '', manualOverride: true });
+      toast(status === 'paid' ? 'Marked as paid' : 'Marked as unpaid');
+      load();
+    } catch(e) { toast(e.response?.data?.message || 'Error updating', 'error'); }
   };
 
   // Full electric reading history for a room, opened from the dues table
@@ -440,7 +456,7 @@ export default function DuesAndPayments() {
               doPrint(`Rooms Due This Month — ${MONTHS[curMon-1]} ${curYr}`, `
                 <h2>Rooms Due This Month — ${MONTHS[curMon-1]} ${curYr} (1–${monthEndDay})</h2>
                 <p>Grand Total Due: ₹${totalDueAll.toLocaleString('en-IN')} across ${roomsDueThisMonth.length} rooms</p>
-                <table><thead><tr><th>Room</th><th>Members</th><th>Start</th><th>End / Renewal</th><th>Rent Due</th><th>Electric Due</th><th>Total Due</th></tr></thead>
+                <table><thead><tr><th>Room</th><th>Members</th><th>Start</th><th>Rent Due Date</th><th>Rent Due</th><th>Electric Due</th><th>Total Due</th></tr></thead>
                 <tbody>${rows}</tbody></table>`);
             }}>🖨 Print Dues List</button>
           </div>
@@ -456,7 +472,7 @@ export default function DuesAndPayments() {
                       <th>Room</th>
                       <th>Members</th>
                       <th>Start Date</th>
-                      <th>End Date</th>
+                      <th>Rent Due Date</th>
                       <th>Rent Due</th>
                       <th>Electric Due</th>
                       <th>Total Due</th>
@@ -493,22 +509,42 @@ export default function DuesAndPayments() {
                             {g.rentDue>0 ? fmtM(g.rentDue) : '—'}
                           </td>
                           <td>
-                            <div style={{display:'flex',alignItems:'center',gap:6,flexWrap:'wrap'}}>
-                              <span style={{color:g.elecDue>0?'#f39c12':'var(--text3)',fontWeight:g.elecDue>0?700:400}}>
-                                {g.elecDue>0 ? fmtM(g.elecDue) : '—'}
-                              </span>
-                              {g.elecReading && <StatusDot status={elecStatus} />}
+                            <div style={{display:'flex',flexDirection:'column',gap:4}}>
+                              <div style={{display:'flex',alignItems:'center',gap:6,flexWrap:'wrap'}}>
+                                <span style={{color:g.elecDue>0?'#f39c12':'var(--text3)',fontWeight:g.elecDue>0?700:400}}>
+                                  {g.elecDue>0 ? fmtM(g.elecDue) : '—'}
+                                </span>
+                                {g.elecReading && <StatusDot status={elecStatus} />}
+                              </div>
+                              {g.elecReading?.dueDate && g.elecDue > 0 && (
+                                <div style={{fontSize:'0.7rem',color:new Date(g.elecReading.dueDate)<today?'var(--danger)':'var(--text3)',fontWeight:new Date(g.elecReading.dueDate)<today?700:400}}>
+                                  {new Date(g.elecReading.dueDate)<today ? 'Overdue since ' : 'Due '}
+                                  {new Date(g.elecReading.dueDate).toLocaleDateString('en-IN',{day:'2-digit',month:'short'})}
+                                </div>
+                              )}
+                              <div style={{display:'flex',alignItems:'center',gap:6,flexWrap:'wrap'}}>
+                              {g.elecReading && elecStatus !== 'paid' && (
+                                <button className="btn btn-xs" style={{background:'rgba(46,204,113,0.12)',color:'#27ae60',border:'1px solid rgba(46,204,113,0.3)',fontSize:'0.66rem',padding:'2px 6px'}}
+                                  onClick={()=>markElecStatus(g.elecReading,'paid')}
+                                  title="Mark this room's electric bill as paid">✅</button>
+                              )}
+                              {g.elecReading && elecStatus !== 'unpaid' && elecStatus !== 'waived' && (
+                                <button className="btn btn-xs" style={{background:'rgba(231,76,60,0.1)',color:'var(--danger)',border:'1px solid rgba(231,76,60,0.25)',fontSize:'0.66rem',padding:'2px 6px'}}
+                                  onClick={()=>markElecStatus(g.elecReading,'unpaid')}
+                                  title="Mark this room's electric bill as unpaid">⏳</button>
+                              )}
                               {g.elecReading && elecStatus !== 'waived' && g.elecDue > 0 && (
                                 <button className="btn btn-xs" style={{background:'rgba(155,89,182,0.12)',color:'#8e44ad',border:'1px solid rgba(155,89,182,0.3)',fontSize:'0.66rem',padding:'2px 6px'}}
                                   onClick={()=>{ setWaiveTarget(g.elecReading); setWaiveReason(''); }}
                                   title="Waive this room's electric bill">🚫 Waive</button>
                               )}
-                              {g.elecReading && elecStatus === 'waived' && (
+                              {g.elecReading && (elecStatus === 'waived' || g.elecReading.manualOverride) && (
                                 <button className="btn btn-xs btn-secondary" style={{fontSize:'0.66rem',padding:'2px 6px'}}
-                                  onClick={()=>restoreElec(g.elecReading)} title="Restore — status will follow receipts again">↩ Restore</button>
+                                  onClick={()=>restoreElec(g.elecReading)} title="Go back to automatic status (from receipts)">↩ Auto</button>
                               )}
                               <button className="btn btn-xs btn-secondary" style={{fontSize:'0.66rem',padding:'2px 6px'}}
                                 onClick={()=>openElecHistory(g.roomNumber)} title="Full electric history for this room">🕒 History</button>
+                              </div>
                             </div>
                           </td>
                           <td style={{color:'var(--danger)',fontWeight:800,fontFamily:'Rajdhani',fontSize:'1rem'}}>
@@ -880,7 +916,7 @@ export default function DuesAndPayments() {
                 <div className="table-wrap">
                   <table>
                     <thead>
-                      <tr><th>Month / Year</th><th>Start</th><th>End</th><th>Units</th><th>Rate</th><th>Bill</th><th>Status</th></tr>
+                      <tr><th>Month / Year</th><th>Start</th><th>End</th><th>Units</th><th>Rate</th><th>Bill</th><th>Due Date</th><th>Status</th></tr>
                     </thead>
                     <tbody>
                       {elecHistoryData.map(r => {
@@ -888,7 +924,7 @@ export default function DuesAndPayments() {
                         const isForThisReading = (rec) => rec.monthYear
                           ? rec.monthYear === readingMonthYear
                           : (rec.receiptDate && new Date(rec.receiptDate).getMonth()+1===r.month && new Date(rec.receiptDate).getFullYear()===r.year);
-                        const paid = r.paymentStatus === 'waived' ? 0 : receipts
+                        const paid = (r.paymentStatus === 'waived' || r.manualOverride) ? 0 : receipts
                           .filter(rec => rec.roomNumber === elecHistoryRoom &&
                             ((rec.packageName==='electric'||rec.paymentType==='electric') || (rec.packageName==='final'||rec.paymentType==='final')) &&
                             isForThisReading(rec))
@@ -900,7 +936,9 @@ export default function DuesAndPayments() {
                             const ratio = rec.totalAmount > 0 ? paidAmt / rec.totalAmount : 1;
                             return s + (rec.electricAmount * ratio);
                           }, 0);
-                        const status = r.paymentStatus === 'waived' ? 'waived' : (paid >= (r.totalAmount||0) && (r.totalAmount||0) > 0 ? 'paid' : paid > 0 ? 'partial' : 'unpaid');
+                        const status = r.paymentStatus === 'waived' ? 'waived'
+                          : r.manualOverride ? (r.paymentStatus === 'paid' ? 'paid' : 'unpaid')
+                          : (paid >= (r.totalAmount||0) && (r.totalAmount||0) > 0 ? 'paid' : paid > 0 ? 'partial' : 'unpaid');
                         return (
                           <tr key={r._id} style={status==='waived'?{opacity:0.6}:{}}>
                             <td style={{fontWeight:500}}>{MONTHS[r.month-1]} {r.year}</td>
@@ -909,6 +947,9 @@ export default function DuesAndPayments() {
                             <td style={{color:'var(--info)',fontWeight:600}}>{r.unitsConsumed} units</td>
                             <td>₹{r.ratePerUnit}/unit</td>
                             <td style={{fontWeight:700,textDecoration:status==='waived'?'line-through':'none'}}>₹{r.totalAmount}</td>
+                            <td style={{fontSize:'0.78rem',color: r.dueDate && status!=='paid' && status!=='waived' && new Date(r.dueDate)<today ? 'var(--danger)' : 'var(--text2)'}}>
+                              {r.dueDate ? new Date(r.dueDate).toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'}) : '—'}
+                            </td>
                             <td><StatusDot status={status} />{status==='waived' && r.waivedReason && <div style={{fontSize:'0.66rem',color:'var(--text3)',marginTop:2}}>"{r.waivedReason}"</div>}</td>
                           </tr>
                         );

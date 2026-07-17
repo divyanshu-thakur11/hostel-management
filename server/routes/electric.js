@@ -117,14 +117,20 @@ router.put('/:id', async (req, res, next) => {
   } catch(err) { next(err); }
 });
 
-// PATCH payment-status: mark as paid / waived / unpaid
+// PATCH payment-status: mark as paid / unpaid / waived (manual), or reset to automatic
 router.patch('/:id/payment-status', async (req, res, next) => {
   try {
-    const { paymentStatus, waivedReason } = req.body;
+    const { paymentStatus, waivedReason, manualOverride } = req.body;
     if (!['unpaid', 'paid', 'waived'].includes(paymentStatus)) {
       return res.status(400).json({ message: 'paymentStatus must be unpaid, paid, or waived' });
     }
-    const update = { paymentStatus };
+    const update = {
+      paymentStatus,
+      // Manual by default (Mark Paid / Mark Unpaid / Waive are deliberate
+      // actions) — pass manualOverride:false explicitly to reset the bill
+      // back to being worked out automatically from receipts.
+      manualOverride: manualOverride !== undefined ? !!manualOverride : true,
+    };
     if (paymentStatus === 'waived') {
       if (!waivedReason || !waivedReason.trim()) {
         return res.status(400).json({ message: 'Reason is required when waiving a bill' });

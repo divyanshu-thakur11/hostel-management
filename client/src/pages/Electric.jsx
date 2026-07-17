@@ -28,7 +28,7 @@ export default function Electric() {
 
   // Waive modal state
   const [waiveTarget,  setWaiveTarget]  = useState(null); // the reading being acted on
-  const [waiveMode,    setWaiveMode]    = useState('');   // 'waive' | 'confirm_paid' | 'confirm_unpaid'
+  const [waiveMode,    setWaiveMode]    = useState('');   // 'waive' | 'mark_paid' | 'mark_unpaid' | 'restore'
   const [waiveReason,  setWaiveReason]  = useState('');
   const [waiveSaving,  setWaiveSaving]  = useState(false);
   const [receipts,     setReceipts]     = useState([]);
@@ -69,10 +69,12 @@ export default function Electric() {
     return direct + inFinal;
   };
 
-  // Effective status is derived automatically from receipts — 'waived' is the
-  // only manual override (set from here or from Dues & Payments).
+  // Effective status: 'waived' and any deliberate manual Paid/Unpaid choice
+  // (manualOverride) are trusted as-is. Otherwise it's derived automatically
+  // from receipts, same as before.
   const getEffectiveStatus = (reading) => {
     if (reading.paymentStatus === 'waived') return 'waived';
+    if (reading.manualOverride) return reading.paymentStatus === 'paid' ? 'paid' : 'unpaid';
     const paid = getPaidForReading(reading);
     const total = reading.totalAmount || 0;
     if (total > 0 && paid >= total) return 'paid';
@@ -84,13 +86,14 @@ export default function Electric() {
     const now = new Date();
     let m = now.getMonth() + 1;
     let y = now.getFullYear();
+    const suggestedDueDate = new Date(now.getTime() + 14 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
     try {
       const res = await electricAPI.getLastByRoom(selectedRoom);
       setLastReading(res.data);
-      setForm({ month: m, year: y, startReading: res.data ? res.data.endReading : '', endReading: '', ratePerUnit: res.data ? res.data.ratePerUnit : 8 });
+      setForm({ month: m, year: y, startReading: res.data ? res.data.endReading : '', endReading: '', ratePerUnit: res.data ? res.data.ratePerUnit : 8, dueDate: suggestedDueDate });
     } catch {
       setLastReading(null);
-      setForm({ month: m, year: y, startReading: '', endReading: '', ratePerUnit: 8 });
+      setForm({ month: m, year: y, startReading: '', endReading: '', ratePerUnit: 8, dueDate: suggestedDueDate });
     }
     setShowModal(true);
   };
@@ -124,12 +127,19 @@ export default function Electric() {
     if (waiveMode === 'waive' && !waiveReason.trim()) { toast('Please enter a reason before waiving', 'error'); return; }
     setWaiveSaving(true);
     try {
-      const payload = waiveMode === 'waive'
-        ? { paymentStatus: 'waived', waivedReason: waiveReason.trim() }
-        : { paymentStatus: 'unpaid', waivedReason: '' }; // restore — status then re-derives automatically from receipts
+      const payload =
+        waiveMode === 'waive'        ? { paymentStatus: 'waived', waivedReason: waiveReason.trim(), manualOverride: true } :
+        waiveMode === 'mark_paid'    ? { paymentStatus: 'paid',   waivedReason: '', manualOverride: true } :
+        waiveMode === 'mark_unpaid'  ? { paymentStatus: 'unpaid', waivedReason: '', manualOverride: true } :
+        /* reset to automatic */       { paymentStatus: 'unpaid', waivedReason: '', manualOverride: false };
 
       await electricAPI.updatePaymentStatus(waiveTarget._id, payload);
-      toast(waiveMode === 'waive' ? 'Bill waived — removed from dues' : 'Restored — status now follows receipts automatically');
+      toast(
+        waiveMode === 'waive'       ? 'Bill waived — removed from dues' :
+        waiveMode === 'mark_paid'   ? 'Marked as paid' :
+        waiveMode === 'mark_unpaid' ? 'Marked as unpaid' :
+                                       'Reset — status now follows receipts automatically'
+      );
       closeWaiveModal();
       load();
     } catch(e) {
@@ -191,7 +201,7 @@ export default function Electric() {
       <div className="card">
         <h3 style={{fontFamily:'Rajdhani',marginBottom:4}}>Room {selectedRoom} — Reading History</h3>
         <p style={{fontSize:'0.78rem',color:'var(--text3)',marginBottom:16}}>
-          Paid / Unpaid is worked out automatically from receipts you create. Use <strong>Waive</strong> to write off a bill without counting it as income (reason required).
+          Paid / Unpaid is worked out automatically from receipts you create — click <strong>✅ Paid</strong> or <strong>⏳ Unpaid</strong> to correct it manually (e.g. a misclick), or <strong>🚫 Waive</strong> to write off a bill without counting it as income (reason required). <strong>↩ Auto</strong> clears any manual setting and goes back to following receipts.
         </p>
         <div className="table-wrap">
           <table>
@@ -203,13 +213,14 @@ export default function Electric() {
                 <th>Units Used</th>
                 <th>Rate/Unit</th>
                 <th>Bill Amount</th>
+                <th>Due Date</th>
                 <th>Payment Status</th>
                 <th>Action</th>
               </tr>
             </thead>
             <tbody>
               {readings.length === 0 ? (
-                <tr><td colSpan={8}><div className="empty-state"><div className="empty-icon">⚡</div><p>No readings for Room {selectedRoom}</p></div></td></tr>
+                <tr><td colSpan={9}><div className="empty-state"><div className="empty-icon">⚡</div><p>No readings for Room {selectedRoom}</p></div></td></tr>
               ) : readings.map((r, i) => {
                 const effStatus = getEffectiveStatus(r);
                 return (
@@ -238,8 +249,21 @@ export default function Electric() {
                   }}>
                     ₹{r.totalAmount}
                   </td>
+                  <td style={{fontSize:'0.8rem'}}>
+                    {r.dueDate ? (
+                      <span style={{
+                        color: (effStatus !== 'paid' && effStatus !== 'waived' && new Date(r.dueDate) < new Date()) ? 'var(--danger)' : 'var(--text2)',
+                        fontWeight: (effStatus !== 'paid' && effStatus !== 'waived' && new Date(r.dueDate) < new Date()) ? 700 : 400,
+                      }}>
+                        {new Date(r.dueDate).toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'})}
+                      </span>
+                    ) : <span style={{color:'var(--text3)'}}>—</span>}
+                  </td>
                   <td>
                     <StatusBadge status={effStatus} waivedReason={r.waivedReason} />
+                    {r.manualOverride && effStatus !== 'waived' && (
+                      <div style={{fontSize:'0.65rem',color:'var(--text3)',marginTop:2}}>set manually</div>
+                    )}
                     {effStatus === 'waived' && r.waivedReason && (
                       <div style={{fontSize:'0.68rem',color:'var(--text3)',marginTop:3,maxWidth:140}}>"{r.waivedReason}"</div>
                     )}
@@ -249,6 +273,20 @@ export default function Electric() {
                   </td>
                   <td>
                     <div style={{display:'flex',gap:5,flexWrap:'wrap'}}>
+                      {effStatus !== 'paid' && (
+                        <button
+                          className="btn btn-xs"
+                          style={{background:'rgba(46,204,113,0.12)',color:'#27ae60',border:'1px solid rgba(46,204,113,0.3)',fontSize:'0.72rem'}}
+                          onClick={() => openWaiveModal(r, 'mark_paid')}
+                        >✅ Paid</button>
+                      )}
+                      {effStatus !== 'unpaid' && (
+                        <button
+                          className="btn btn-xs"
+                          style={{background:'rgba(231,76,60,0.1)',color:'var(--danger)',border:'1px solid rgba(231,76,60,0.25)',fontSize:'0.72rem'}}
+                          onClick={() => openWaiveModal(r, 'mark_unpaid')}
+                        >⏳ Unpaid</button>
+                      )}
                       {effStatus !== 'waived' && (
                         <button
                           className="btn btn-xs"
@@ -256,12 +294,13 @@ export default function Electric() {
                           onClick={() => openWaiveModal(r, 'waive')}
                         >🚫 Waive</button>
                       )}
-                      {effStatus === 'waived' && (
+                      {(r.manualOverride || effStatus === 'waived') && (
                         <button
                           className="btn btn-xs btn-secondary"
                           style={{fontSize:'0.72rem'}}
                           onClick={() => openWaiveModal(r, 'restore')}
-                        >↩ Restore</button>
+                          title="Go back to automatic status (from receipts)"
+                        >↩ Auto</button>
                       )}
                       <button className="btn btn-danger btn-xs" onClick={() => del(r._id)} style={{fontSize:'0.72rem'}}>🗑</button>
                     </div>
@@ -310,6 +349,10 @@ export default function Electric() {
                   <label>Rate per Unit (₹)</label>
                   <input type="number" value={form.ratePerUnit} onChange={e => setForm(p=>({...p,ratePerUnit:e.target.value}))} />
                 </div>
+                <div className="form-group">
+                  <label>Due Date <span style={{color:'var(--text3)',fontWeight:400}}>(suggested +14 days)</span></label>
+                  <input type="date" value={form.dueDate || ''} onChange={e => setForm(p=>({...p,dueDate:e.target.value}))} />
+                </div>
                 <div className="form-group" style={{justifyContent:'flex-end'}}>
                   <label>Calculated Bill</label>
                   <div style={{background:'var(--bg3)',border:'1px solid var(--border)',borderRadius:6,padding:'10px 12px',color:'var(--accent)',fontFamily:'Rajdhani',fontSize:'1.2rem',fontWeight:700}}>
@@ -332,7 +375,10 @@ export default function Electric() {
           <div className="modal" style={{maxWidth:420}}>
             <div className="modal-header">
               <h3>
-                {waiveMode === 'waive' ? '🚫 Waive Electric Bill' : '↩ Restore Bill'}
+                {waiveMode === 'waive' ? '🚫 Waive Electric Bill'
+                : waiveMode === 'mark_paid' ? '✅ Mark as Paid'
+                : waiveMode === 'mark_unpaid' ? '⏳ Mark as Unpaid'
+                : '↩ Reset to Automatic'}
               </h3>
               <button className="close-btn" onClick={closeWaiveModal}>✕</button>
             </div>
@@ -363,9 +409,21 @@ export default function Electric() {
                 </>
               )}
 
+              {waiveMode === 'mark_paid' && (
+                <div style={{background:'rgba(46,204,113,0.08)',border:'1px solid rgba(46,204,113,0.25)',borderRadius:6,padding:'10px 14px',fontSize:'0.82rem',color:'var(--text2)'}}>
+                  This marks the bill as <strong>Paid</strong> and keeps it that way regardless of receipts — use this to correct a misclick or record a payment taken outside the receipt system. Use <strong>↩ Auto</strong> later if you want it to follow receipts again.
+                </div>
+              )}
+
+              {waiveMode === 'mark_unpaid' && (
+                <div style={{background:'rgba(231,76,60,0.07)',border:'1px solid rgba(231,76,60,0.25)',borderRadius:6,padding:'10px 14px',fontSize:'0.82rem',color:'var(--text2)'}}>
+                  This marks the bill as <strong>Unpaid</strong> and keeps it that way regardless of receipts, so it'll show up in dues again. Use <strong>↩ Auto</strong> later if you want it to follow receipts again.
+                </div>
+              )}
+
               {waiveMode === 'restore' && (
                 <div style={{background:'rgba(231,76,60,0.07)',border:'1px solid rgba(231,76,60,0.25)',borderRadius:6,padding:'10px 14px',fontSize:'0.82rem',color:'var(--text2)'}}>
-                  This removes the waiver. The bill's status will then be worked out automatically from receipts — <strong>Paid</strong> if fully covered, <strong>Unpaid</strong> otherwise.
+                  This clears any manual Paid/Unpaid/Waived setting. The bill's status will then be worked out automatically from receipts — <strong>Paid</strong> if fully covered, <strong>Unpaid</strong> otherwise.
                 </div>
               )}
             </div>
@@ -379,7 +437,9 @@ export default function Electric() {
               >
                 {waiveSaving ? '⏳ Saving…'
                 : waiveMode === 'waive' ? '🚫 Confirm Waive'
-                :                         '↩ Confirm Restore'}
+                : waiveMode === 'mark_paid' ? '✅ Confirm Paid'
+                : waiveMode === 'mark_unpaid' ? '⏳ Confirm Unpaid'
+                :                         '↩ Confirm Reset'}
               </button>
             </div>
           </div>

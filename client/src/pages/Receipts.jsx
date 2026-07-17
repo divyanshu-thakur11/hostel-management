@@ -16,6 +16,55 @@ function numberToWords(num) {
 }
 
 const PKG = { rent:'Rent / किराया', advance:'Advance / एडवांस', electric:'Electric / बिजली', final:'Final Bill / अंतिम', other:'Other / अन्य' };
+
+// A wide table's horizontal scrollbar normally only appears at the very
+// bottom of the (possibly very long) table, which means scrolling all the
+// way down just to shift the table sideways. This adds a slim, always-visible
+// scrollbar right above the table too, kept in sync with the real one.
+function TopScrollTable({ children }) {
+  const topRef = useRef(null);
+  const bottomRef = useRef(null);
+  const [scrollWidth, setScrollWidth] = useState(0);
+  const syncing = useRef(false);
+
+  useEffect(() => {
+    const el = bottomRef.current;
+    if (!el) return;
+    const update = () => setScrollWidth(el.scrollWidth);
+    update();
+    // Observe the inner table itself (not the overflow-clipped wrapper) so
+    // this correctly reacts to the table's content changing width, e.g. once
+    // data finishes loading.
+    const target = el.firstElementChild || el;
+    const ro = new ResizeObserver(update);
+    ro.observe(target);
+    return () => ro.disconnect();
+  }, []);
+
+  const syncFromTop = (e) => {
+    if (syncing.current) return;
+    syncing.current = true;
+    if (bottomRef.current) bottomRef.current.scrollLeft = e.target.scrollLeft;
+    syncing.current = false;
+  };
+  const syncFromBottom = (e) => {
+    if (syncing.current) return;
+    syncing.current = true;
+    if (topRef.current) topRef.current.scrollLeft = e.target.scrollLeft;
+    syncing.current = false;
+  };
+
+  return (
+    <div>
+      <div ref={topRef} onScroll={syncFromTop} style={{overflowX:'auto', overflowY:'hidden', height:14}}>
+        <div style={{width:scrollWidth, height:1}} />
+      </div>
+      <div ref={bottomRef} className="table-wrap" onScroll={syncFromBottom}>
+        {children}
+      </div>
+    </div>
+  );
+}
 const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 
 const EMPTY = {
@@ -533,7 +582,7 @@ export default function Receipts() {
       <div className="card">
         {loading ? <div style={{textAlign:'center',padding:32,color:'var(--text3)'}}>⏳ Loading...</div> : (
           <>
-            <div className="table-wrap">
+            <TopScrollTable>
               <table>
                 <thead>
                   <tr><th>#</th><th>Bill No.</th><th>Date</th><th>Room</th><th>Members</th><th>Type</th><th>Validity</th><th>Total</th><th>Paid</th><th>Balance</th><th>Mode</th><th>Actions</th></tr>
@@ -584,7 +633,7 @@ export default function Receipts() {
                   ))}
                 </tbody>
               </table>
-            </div>
+            </TopScrollTable>
             {pages>1&&(
               <div style={{display:'flex',gap:6,justifyContent:'center',marginTop:14,alignItems:'center'}}>
                 <button className="btn btn-secondary btn-xs" disabled={page===1} onClick={()=>loadReceipts(page-1)}>← Prev</button>
@@ -805,7 +854,7 @@ export default function Receipts() {
               ) : historyData.length === 0 ? (
                 <div className="empty-state"><div className="empty-icon">🧾</div><p>No receipts for this room yet</p></div>
               ) : (
-                <div className="table-wrap">
+                <TopScrollTable>
                   <table>
                     <thead>
                       <tr><th>Bill No.</th><th>Date</th><th>Members</th><th>Type</th><th>Validity</th><th>Total</th><th>Paid</th><th>Balance</th><th>Mode</th></tr>
@@ -830,7 +879,7 @@ export default function Receipts() {
                       ))}
                     </tbody>
                   </table>
-                </div>
+                </TopScrollTable>
               )}
             </div>
             <div className="modal-footer"><button className="btn btn-secondary" onClick={()=>setHistoryRoom(null)}>Close</button></div>

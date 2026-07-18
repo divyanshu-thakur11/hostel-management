@@ -233,6 +233,15 @@ export default function DuesAndPayments() {
       const elecPaid = elecManualUnpaid ? 0 : (elecPaidDirect + elecPaidInFinal + elecDirectlyPaid);
       const elecDue  = elecManualPaid ? 0 : Math.max(0, elecTotal - elecPaid);
 
+      // Advance: the most recent Advance-type receipt for this room (if any),
+      // shown as its own tracked figure — an advance payment made ahead of
+      // time, and the date it's "good through" (its own To Date validity).
+      const latestAdvanceReceipt = receipts
+        .filter(rec => rec.roomNumber === rNum && (rec.packageName || rec.paymentType || '') === 'advance')
+        .sort((a, b) => new Date(b.receiptDate || 0) - new Date(a.receiptDate || 0))[0];
+      const advanceAmt = latestAdvanceReceipt ? (latestAdvanceReceipt.amountPaid ?? latestAdvanceReceipt.totalAmount ?? 0) : 0;
+      const advanceDueDate = latestAdvanceReceipt?.toDate ? new Date(latestAdvanceReceipt.toDate) : null;
+
       return {
         roomNumber: rNum,
         members: roomActiveMembers.length ? roomActiveMembers : (r.members || []),
@@ -244,6 +253,8 @@ export default function DuesAndPayments() {
         elecPaid,
         elecDue,
         elecReading,
+        advanceAmt,
+        advanceDueDate,
         totalDue: rentDue + elecDue,
         mobileNo: (roomActiveMembers[0] || (r.members || [])[0])?.mobileNo || '',
         memberMobiles: (roomActiveMembers.length ? roomActiveMembers : (r.members || [])).map(m => m.mobileNo).filter(Boolean),
@@ -273,14 +284,31 @@ export default function DuesAndPayments() {
       const endDate    = due.paidThrough || null;
       const [primary, ...others] = roomActiveMembers.length ? roomActiveMembers : [{ name: 'Unknown', mobileNo: '' }];
       const diffDays = endDate ? Math.ceil((endDate - today) / (1000 * 60 * 60 * 24)) : null;
+
+      // The most recent Rent/Advance/Final receipt for this room — its own
+      // From/To dates are the real, current validity period, which is what
+      // WhatsApp reminders should quote. (startDate/endDate above are for the
+      // table columns: original move-in date, and the earliest-paid-through
+      // date across all members — useful for the dues view, but not always
+      // the same as "what does the latest receipt actually say".)
+      const RENT_PERIOD_TYPES = ['rent', 'advance', 'final'];
+      const latestValidityReceipt = receipts
+        .filter(rec => rec.roomNumber === rn && RENT_PERIOD_TYPES.includes(rec.packageName || rec.paymentType || ''))
+        .sort((a, b) => new Date(b.receiptDate || 0) - new Date(a.receiptDate || 0))[0];
+      const validityFrom = latestValidityReceipt?.fromDate ? new Date(latestValidityReceipt.fromDate) : startDate;
+      const validityTo   = latestValidityReceipt?.toDate   ? new Date(latestValidityReceipt.toDate)   : endDate;
+
       return {
         roomNumber: rn, primary, others,
         startDate, endDate, diffDays,
+        validityFrom, validityTo,
         rentDue: due.rentDue || 0,
         elecDue: due.elecDue || 0,
         elecTotal: due.elecTotal || 0,
         elecPaid: due.elecPaid || 0,
         elecReading: due.elecReading || null,
+        advanceAmt: due.advanceAmt || 0,
+        advanceDueDate: due.advanceDueDate || null,
         totalDue: due.totalDue || 0,
         memberNames: roomActiveMembers.map(m => m.name).join(', '),
         mobileNo: primary.mobileNo || '',
@@ -450,13 +478,16 @@ export default function DuesAndPayments() {
                   <td>${dateCell}</td>
                   <td class="red">₹${(g.rentDue||0).toLocaleString('en-IN')}</td>
                   <td class="${g.elecDue>0?'gold':''}">₹${(g.elecDue||0).toLocaleString('en-IN')}</td>
+                  <td>${g.elecReading?.dueDate?new Date(g.elecReading.dueDate).toLocaleDateString('en-IN'):'—'}</td>
+                  <td>${g.advanceAmt>0?'₹'+g.advanceAmt.toLocaleString('en-IN'):'—'}</td>
+                  <td>${g.advanceDueDate?g.advanceDueDate.toLocaleDateString('en-IN'):'—'}</td>
                   <td class="red"><strong>₹${(g.totalDue||0).toLocaleString('en-IN')}</strong></td>
                 </tr>`;
               }).join('');
               doPrint(`Rooms Due This Month — ${MONTHS[curMon-1]} ${curYr}`, `
                 <h2>Rooms Due This Month — ${MONTHS[curMon-1]} ${curYr} (1–${monthEndDay})</h2>
                 <p>Grand Total Due: ₹${totalDueAll.toLocaleString('en-IN')} across ${roomsDueThisMonth.length} rooms</p>
-                <table><thead><tr><th>Room</th><th>Members</th><th>Start</th><th>Rent Due Date</th><th>Rent Due</th><th>Electric Due</th><th>Total Due</th></tr></thead>
+                <table><thead><tr><th>Room</th><th>Members</th><th>Start</th><th>Rent Due Date</th><th>Rent Due</th><th>Electric Due</th><th>Electric Due Date</th><th>Advance Rent</th><th>Advance Due Date</th><th>Total Due</th></tr></thead>
                 <tbody>${rows}</tbody></table>`);
             }}>🖨 Print Dues List</button>
           </div>
@@ -475,6 +506,9 @@ export default function DuesAndPayments() {
                       <th>Rent Due Date</th>
                       <th>Rent Due</th>
                       <th>Electric Due</th>
+                      <th>Electric Due Date</th>
+                      <th>Advance Rent</th>
+                      <th>Advance Due Date</th>
                       <th>Total Due</th>
                       <th>WhatsApp</th>
                     </tr>
@@ -516,12 +550,6 @@ export default function DuesAndPayments() {
                                 </span>
                                 {g.elecReading && <StatusDot status={elecStatus} />}
                               </div>
-                              {g.elecReading?.dueDate && g.elecDue > 0 && (
-                                <div style={{fontSize:'0.7rem',color:new Date(g.elecReading.dueDate)<today?'var(--danger)':'var(--text3)',fontWeight:new Date(g.elecReading.dueDate)<today?700:400}}>
-                                  {new Date(g.elecReading.dueDate)<today ? 'Overdue since ' : 'Due '}
-                                  {new Date(g.elecReading.dueDate).toLocaleDateString('en-IN',{day:'2-digit',month:'short'})}
-                                </div>
-                              )}
                               <div style={{display:'flex',alignItems:'center',gap:6,flexWrap:'wrap'}}>
                               {g.elecReading && elecStatus !== 'paid' && (
                                 <button className="btn btn-xs" style={{background:'rgba(46,204,113,0.12)',color:'#27ae60',border:'1px solid rgba(46,204,113,0.3)',fontSize:'0.66rem',padding:'2px 6px'}}
@@ -547,6 +575,19 @@ export default function DuesAndPayments() {
                               </div>
                             </div>
                           </td>
+                          <td style={{fontSize:'0.78rem'}}>
+                            {g.elecReading?.dueDate ? (
+                              <span style={{color: (g.elecDue>0 && new Date(g.elecReading.dueDate)<today) ? 'var(--danger)' : 'var(--text2)', fontWeight: (g.elecDue>0 && new Date(g.elecReading.dueDate)<today) ? 700 : 400}}>
+                                {new Date(g.elecReading.dueDate).toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'})}
+                              </span>
+                            ) : <span style={{color:'var(--text3)'}}>—</span>}
+                          </td>
+                          <td style={{color:g.advanceAmt>0?'var(--text)':'var(--text3)',fontWeight:g.advanceAmt>0?600:400}}>
+                            {g.advanceAmt>0 ? fmtM(g.advanceAmt) : '—'}
+                          </td>
+                          <td style={{fontSize:'0.78rem',color:'var(--text2)'}}>
+                            {g.advanceDueDate ? g.advanceDueDate.toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'}) : <span style={{color:'var(--text3)'}}>—</span>}
+                          </td>
                           <td style={{color:'var(--danger)',fontWeight:800,fontFamily:'Rajdhani',fontSize:'1rem'}}>
                             {fmtM(g.totalDue)}
                           </td>
@@ -559,15 +600,17 @@ export default function DuesAndPayments() {
                                     `━━━━━━━━━━━━━━━━`,
                                     `Dear *${g.primary.name}*,`,
                                     `🚪 Room No: *${g.roomNumber}*`,
-                                    g.endDate ? `⏰ Validity: *${g.startDate?g.startDate.toLocaleDateString('en-IN'):'—'} → ${g.endDate.toLocaleDateString('en-IN')}*` : '',
+                                    g.validityTo ? `⏰ Validity: *${g.validityFrom?g.validityFrom.toLocaleDateString('en-IN'):'—'} → ${g.validityTo.toLocaleDateString('en-IN')}*` : '',
                                     ``,
                                     g.rentDue>0 ? `🏠 Rent Due: *₹${g.rentDue.toLocaleString('en-IN')}*` : '',
-                                    g.elecDue>0 ? `⚡ Electric Due: *₹${g.elecDue.toLocaleString('en-IN')}*` : '',
+                                    g.elecDue>0 ? `⚡ Electric Due: *₹${g.elecDue.toLocaleString('en-IN')}*${g.elecReading?.dueDate ? ` (by ${new Date(g.elecReading.dueDate).toLocaleDateString('en-IN')})` : ''}` : '',
                                     ``,
                                     `💰 *Total Due: ₹${g.totalDue.toLocaleString('en-IN')}*`,
                                     ``,
                                     `Please clear dues at earliest.`,
                                     `Late payment fine: ₹50/day.`,
+                                    ``,
+                                    `Share your payment receipt on Mob. No. 9826400917`,
                                     ``,
                                     `Thank you 🙏`,
                                   ].filter(Boolean).join('\n');
@@ -583,7 +626,7 @@ export default function DuesAndPayments() {
                           <tr key={om._id} style={{background:'var(--bg3)',opacity:0.85,borderBottom:oi===g.others.length-1?'1px solid var(--border)':'none'}}>
                             <td style={{paddingLeft:24,color:'var(--text3)',fontSize:'0.75rem'}}>↳ same room</td>
                             <td style={{color:'var(--text2)',fontSize:'0.83rem'}}>{om.name}</td>
-                            <td colSpan={5} style={{color:'var(--text3)',fontSize:'0.75rem'}}>same dues as above</td>
+                            <td colSpan={8} style={{color:'var(--text3)',fontSize:'0.75rem'}}>same dues as above</td>
                             <td>
                               {om.mobileNo && (
                                 <button style={{background:'#25d366',color:'white',border:'none',borderRadius:5,padding:'3px 7px',cursor:'pointer',fontSize:'0.7rem',fontWeight:700}}
@@ -592,10 +635,13 @@ export default function DuesAndPayments() {
                                       `🏠 *Hostel Due Payment Reminder*`,
                                       `Dear *${om.name}*,`,
                                       `🚪 Room No: *${g.roomNumber}*`,
+                                      g.validityTo ? `⏰ Validity: *${g.validityFrom?g.validityFrom.toLocaleDateString('en-IN'):'—'} → ${g.validityTo.toLocaleDateString('en-IN')}*` : '',
                                       g.rentDue>0 ? `🏠 Rent Due: *₹${g.rentDue.toLocaleString('en-IN')}*` : '',
-                                      g.elecDue>0 ? `⚡ Electric Due: *₹${g.elecDue.toLocaleString('en-IN')}*` : '',
+                                      g.elecDue>0 ? `⚡ Electric Due: *₹${g.elecDue.toLocaleString('en-IN')}*${g.elecReading?.dueDate ? ` (by ${new Date(g.elecReading.dueDate).toLocaleDateString('en-IN')})` : ''}` : '',
                                       `💰 *Total Due: ₹${g.totalDue.toLocaleString('en-IN')}*`,
-                                      ``,`Please clear dues. Late payment fine: ₹50/day. Thank you 🙏`,
+                                      ``,`Please clear dues. Late payment fine: ₹50/day.`,
+                                      `Share your payment receipt on Mob. No. 9826400917`,
+                                      `Thank you 🙏`,
                                     ].filter(Boolean).join('\n');
                                     window.open(`https://wa.me/91${String(om.mobileNo).replace(/\D/g,'').slice(-10)}?text=${encodeURIComponent(msg)}`,'_blank');
                                   }}>
@@ -965,4 +1011,4 @@ export default function DuesAndPayments() {
       )}
     </div>
   );
-}
+} 

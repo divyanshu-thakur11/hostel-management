@@ -483,7 +483,7 @@ export default function DuesAndPayments() {
           <div style={{display:'flex',justifyContent:'flex-end',marginBottom:10}}>
             <button className="btn btn-secondary btn-xs" onClick={() => {
               const rows = roomsDueThisMonth.map(g => {
-                const dateCell = g.endDate
+                const dateCell = (g.rentDue > 0 && g.endDate)
                   ? `<span style="font-weight:700">${g.endDate.toLocaleDateString('en-IN',{day:'numeric',month:'short',year:'numeric'})}</span><br><small style="color:#888;font-size:10px">${g.diffDays<0?`Overdue ${Math.abs(g.diffDays)}d`:g.diffDays===0?'Today':`${g.diffDays}d left`}</small>`
                   : '—';
                 return `<tr>
@@ -493,7 +493,7 @@ export default function DuesAndPayments() {
                   <td>${dateCell}</td>
                   <td class="red">₹${(g.rentDue||0).toLocaleString('en-IN')}</td>
                   <td class="${g.elecDue>0?'gold':''}">₹${(g.elecDue||0).toLocaleString('en-IN')}</td>
-                  <td>${g.elecReading?.dueDate?new Date(g.elecReading.dueDate).toLocaleDateString('en-IN'):'—'}</td>
+                  <td>${g.elecReading?.dueDate ? new Date(g.elecReading.dueDate).toLocaleDateString('en-IN') : (g.elecDue>0 && g.elecReading ? `${MONTHS[g.elecReading.month-1]} ${g.elecReading.year}` : '—')}</td>
                   <td>${g.advanceAmt>0?'₹'+g.advanceAmt.toLocaleString('en-IN'):'—'}</td>
                   <td>${g.advanceDueDate?g.advanceDueDate.toLocaleDateString('en-IN'):'—'}</td>
                   <td class="red"><strong>₹${(g.totalDue||0).toLocaleString('en-IN')}</strong></td>
@@ -543,7 +543,7 @@ export default function DuesAndPayments() {
                           <td style={{fontWeight:600,color:'var(--text)'}}>{g.primary.name}</td>
                           <td style={{fontSize:'0.78rem',color:'var(--text2)'}}>{g.startDate ? g.startDate.toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'}) : '—'}</td>
                           <td style={{fontSize:'0.78rem'}}>
-                            {g.endDate ? (
+                            {(g.rentDue > 0 && g.endDate) ? (
                               <div>
                                 <span style={{color: g.diffDays<0 ? 'var(--danger)' : g.diffDays<=7 ? '#f39c12' : 'var(--success)', fontWeight:700}}>
                                   {g.endDate.toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'})}
@@ -591,10 +591,16 @@ export default function DuesAndPayments() {
                             </div>
                           </td>
                           <td style={{fontSize:'0.78rem'}}>
-                            {g.elecReading?.dueDate ? (
-                              <span style={{color: (g.elecDue>0 && new Date(g.elecReading.dueDate)<today) ? 'var(--danger)' : 'var(--text2)', fontWeight: (g.elecDue>0 && new Date(g.elecReading.dueDate)<today) ? 700 : 400}}>
-                                {new Date(g.elecReading.dueDate).toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'})}
-                              </span>
+                            {g.elecDue > 0 && g.elecReading ? (
+                              g.elecReading.dueDate ? (
+                                <span style={{color: new Date(g.elecReading.dueDate)<today ? 'var(--danger)' : 'var(--text2)', fontWeight: new Date(g.elecReading.dueDate)<today ? 700 : 400}}>
+                                  {new Date(g.elecReading.dueDate).toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'})}
+                                </span>
+                              ) : (
+                                <span style={{color:'var(--text3)'}} title="No due date set on this reading — showing which month's bill this is">
+                                  {MONTHS[g.elecReading.month-1]} {g.elecReading.year}
+                                </span>
+                              )
                             ) : <span style={{color:'var(--text3)'}}>—</span>}
                           </td>
                           <td style={{color:g.advanceAmt>0?'#f39c12':'var(--text3)',fontWeight:g.advanceAmt>0?700:400}}>
@@ -618,7 +624,7 @@ export default function DuesAndPayments() {
                                     g.validityTo ? `⏰ Validity: *${g.validityFrom?g.validityFrom.toLocaleDateString('en-IN'):'—'} → ${g.validityTo.toLocaleDateString('en-IN')}*` : '',
                                     ``,
                                     g.rentDue>0 ? `🏠 Rent Due: *₹${g.rentDue.toLocaleString('en-IN')}*` : '',
-                                    g.elecDue>0 ? `⚡ Electric Due: *₹${g.elecDue.toLocaleString('en-IN')}*${g.elecReading?.dueDate ? ` (by ${new Date(g.elecReading.dueDate).toLocaleDateString('en-IN')})` : ''}` : '',
+                                    g.elecDue>0 ? `⚡ Electric Due: *₹${g.elecDue.toLocaleString('en-IN')}*${g.elecReading?.dueDate ? ` (by ${new Date(g.elecReading.dueDate).toLocaleDateString('en-IN')})` : g.elecReading ? ` (${MONTHS[g.elecReading.month-1]} ${g.elecReading.year})` : ''}` : '',
                                     g.advanceAmt>0 ? `📌 Advance Due: *₹${g.advanceAmt.toLocaleString('en-IN')}*${g.advanceDueDate ? ` (by ${g.advanceDueDate.toLocaleDateString('en-IN')})` : ''}` : '',
                                     ``,
                                     `💰 *Total Due: ₹${g.totalDue.toLocaleString('en-IN')}*`,
@@ -653,7 +659,7 @@ export default function DuesAndPayments() {
                                       `🚪 Room No: *${g.roomNumber}*`,
                                       g.validityTo ? `⏰ Validity: *${g.validityFrom?g.validityFrom.toLocaleDateString('en-IN'):'—'} → ${g.validityTo.toLocaleDateString('en-IN')}*` : '',
                                       g.rentDue>0 ? `🏠 Rent Due: *₹${g.rentDue.toLocaleString('en-IN')}*` : '',
-                                      g.elecDue>0 ? `⚡ Electric Due: *₹${g.elecDue.toLocaleString('en-IN')}*${g.elecReading?.dueDate ? ` (by ${new Date(g.elecReading.dueDate).toLocaleDateString('en-IN')})` : ''}` : '',
+                                      g.elecDue>0 ? `⚡ Electric Due: *₹${g.elecDue.toLocaleString('en-IN')}*${g.elecReading?.dueDate ? ` (by ${new Date(g.elecReading.dueDate).toLocaleDateString('en-IN')})` : g.elecReading ? ` (${MONTHS[g.elecReading.month-1]} ${g.elecReading.year})` : ''}` : '',
                                       g.advanceAmt>0 ? `📌 Advance Due: *₹${g.advanceAmt.toLocaleString('en-IN')}*${g.advanceDueDate ? ` (by ${g.advanceDueDate.toLocaleDateString('en-IN')})` : ''}` : '',
                                       `💰 *Total Due: ₹${g.totalDue.toLocaleString('en-IN')}*`,
                                       ``,`Please clear dues. Late payment fine: ₹50/day.`,

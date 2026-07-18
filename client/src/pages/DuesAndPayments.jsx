@@ -182,65 +182,80 @@ export default function DuesAndPayments() {
           : fixedRent;
       }
 
-      // Electric: current month's reading — matched by its own month/year field
-      // (a plain, direct match; no date-range logic needed here).
-      const elecReading = electric.find(e => e.roomNumber === rNum && e.month === curMon && e.year === curYr);
-      // Waived bills are written off — zero due, zero income
-      const elecWaived  = elecReading?.paymentStatus === 'waived';
-      const elecTotal   = (elecWaived ? 0 : elecReading?.totalAmount) || 0;
-      // A deliberate Mark Paid / Mark Unpaid (manualOverride) is trusted as-is
-      // and skips the receipt-based calculation entirely — this is what lets
-      // a misclick get corrected without it reverting on the next recalculation.
-      const elecManualPaid   = !elecWaived && elecReading?.manualOverride && elecReading?.paymentStatus === 'paid';
-      const elecManualUnpaid = !elecWaived && elecReading?.manualOverride && elecReading?.paymentStatus === 'unpaid';
+      // Electric: unlike rent (which is a single ongoing balance tracked via
+      // paidThrough), each electric reading is its own separate bill for its
+      // own month. Looking at only the CURRENT month's reading was the bug:
+      // an unpaid bill from a prior month (with its own earlier due date)
+      // would vanish the moment the calendar rolled into a new month, or get
+      // silently replaced by whatever reading exists for the new month. So
+      // instead, every reading for this room is checked for its own due
+      // amount, and any that are still owed are kept — sorted oldest first,
+      // since that's the most overdue (and most actionable) one to show.
+      const roomReadings = electric.filter(e => e.roomNumber === rNum);
+      const readingDueInfo = roomReadings.map(reading => {
+        const waived = reading.paymentStatus === 'waived';
+        const manualPaid   = !waived && reading.manualOverride && reading.paymentStatus === 'paid';
+        const manualUnpaid = !waived && reading.manualOverride && reading.paymentStatus === 'unpaid';
+        const total = waived ? 0 : (reading.totalAmount || 0);
 
-      // A receipt counts toward THIS month's electric bill if it was actually
-      // billed for this month (monthYear, e.g. "2026-07" — the Billing Month
-      // picked when the receipt was made), not just because it happened to be
-      // created sometime this month. Older receipts made before this field was
-      // captured fall back to receiptDate as a best effort.
-      const curMonthYearStr = `${curYr}-${String(curMon).padStart(2, '0')}`;
-      const isForThisMonth = (rec) => rec.monthYear
-        ? rec.monthYear === curMonthYearStr
-        : (rec.receiptDate && toMonthKey(rec.receiptDate) === monthKey);
+        // A receipt counts toward THIS reading's bill if it was actually
+        // billed for that reading's own month (monthYear, e.g. "2026-07" —
+        // the Billing Month picked when the receipt was made). Older receipts
+        // made before this field was captured fall back to receiptDate.
+        const readingMonthYearStr = `${reading.year}-${String(reading.month).padStart(2, '0')}`;
+        const isForThisReading = (rec) => rec.monthYear
+          ? rec.monthYear === readingMonthYearStr
+          : (rec.receiptDate && new Date(rec.receiptDate).getFullYear() === reading.year && new Date(rec.receiptDate).getMonth() + 1 === reading.month);
 
-      // Electric paid this month — via explicit electric receipts billed for this month
-      const elecPaidDirect = (elecWaived || elecManualUnpaid) ? 0 : receipts
-        .filter(rec =>
-          rec.roomNumber === rNum &&
-          (rec.packageName === 'electric' || rec.paymentType === 'electric') &&
-          isForThisMonth(rec)
-        )
-        .reduce((s, rec) => s + (rec.amountPaid ?? rec.totalAmount ?? 0), 0);
-      // Electric also paid if a 'final' receipt billed for this month includes it —
-      // scaled by how much of that bill has actually been paid, so a part-paid
-      // final bill only credits the electric portion actually received.
-      const elecPaidInFinal = (elecWaived || elecManualUnpaid) ? 0 : receipts
-        .filter(rec => rec.roomNumber === rNum && (rec.packageName === 'final' || rec.paymentType === 'final') && isForThisMonth(rec))
-        .reduce((s, rec) => {
-          let elecAmt = rec.electricAmount;
-          if (!(elecAmt > 0)) {
-            const m = (rec.notes || '').match(/Electric\s*(?:[\w]+)?\s*:?\s*₹([\d,]+)/);
-            elecAmt = m ? parseInt(m[1].replace(/,/g, '')) : 0;
-          }
-          if (!(elecAmt > 0)) return s;
-          const paid = rec.amountPaid ?? rec.totalAmount ?? 0;
-          const paidRatio = rec.totalAmount > 0 ? paid / rec.totalAmount : 1;
-          return s + (elecAmt * paidRatio);
-        }, 0);
-      // If reading is marked paid (manually, or the older non-override 'paid' flag), treat as fully paid
-      const elecDirectlyPaid = (!elecWaived && !elecManualUnpaid && elecReading?.paymentStatus === 'paid') ? elecTotal : 0;
-      const elecPaid = elecManualUnpaid ? 0 : (elecPaidDirect + elecPaidInFinal + elecDirectlyPaid);
-      const elecDue  = elecManualPaid ? 0 : Math.max(0, elecTotal - elecPaid);
+        const paidDirect = (waived || manualUnpaid) ? 0 : receipts
+          .filter(rec => rec.roomNumber === rNum && (rec.packageName === 'electric' || rec.paymentType === 'electric') && isForThisReading(rec))
+          .reduce((s, rec) => s + (rec.amountPaid ?? rec.totalAmount ?? 0), 0);
+        const paidInFinal = (waived || manualUnpaid) ? 0 : receipts
+          .filter(rec => rec.roomNumber === rNum && (rec.packageName === 'final' || rec.paymentType === 'final') && isForThisReading(rec))
+          .reduce((s, rec) => {
+            let elecAmt = rec.electricAmount;
+            if (!(elecAmt > 0)) {
+              const m = (rec.notes || '').match(/Electric\s*(?:[\w]+)?\s*:?\s*₹([\d,]+)/);
+              elecAmt = m ? parseInt(m[1].replace(/,/g, '')) : 0;
+            }
+            if (!(elecAmt > 0)) return s;
+            const paid = rec.amountPaid ?? rec.totalAmount ?? 0;
+            const paidRatio = rec.totalAmount > 0 ? paid / rec.totalAmount : 1;
+            return s + (elecAmt * paidRatio);
+          }, 0);
+        const directlyPaid = (!waived && !manualUnpaid && reading.paymentStatus === 'paid') ? total : 0;
+        const paid = manualUnpaid ? 0 : (paidDirect + paidInFinal + directlyPaid);
+        const due  = manualPaid ? 0 : Math.max(0, total - paid);
+        return { reading, total, paid, due };
+      });
 
-      // Advance: the most recent Advance-type receipt for this room (if any),
-      // shown as its own tracked figure — an advance payment made ahead of
-      // time, and the date it's "good through" (its own To Date validity).
-      const latestAdvanceReceipt = receipts
-        .filter(rec => rec.roomNumber === rNum && (rec.packageName || rec.paymentType || '') === 'advance')
+      const unpaidReadings = readingDueInfo
+        .filter(x => x.due > 0)
+        .sort((a, b) => (a.reading.year * 12 + a.reading.month) - (b.reading.year * 12 + b.reading.month));
+
+      const elecDue = unpaidReadings.reduce((s, x) => s + x.due, 0);
+      // The "representative" reading shown in the Electric Due Date column and
+      // used for the Waive/Mark Paid/Unpaid buttons: the oldest unpaid one if
+      // there is one (most overdue = most urgent), otherwise the most recent
+      // reading overall so a fully-paid room still shows a green "Paid" status
+      // instead of a blank column.
+      const mostRecentReadingInfo = readingDueInfo
+        .slice()
+        .sort((a, b) => (b.reading.year * 12 + b.reading.month) - (a.reading.year * 12 + a.reading.month))[0];
+      const chosen = unpaidReadings[0] || mostRecentReadingInfo;
+      const elecReading = chosen?.reading || null;
+      const elecTotal   = chosen?.total || 0;
+      const elecPaid    = chosen?.paid || 0;
+
+      // Advance: the most recent Advance-type receipt for this room that
+      // still has an outstanding balance — i.e. what's actually still DUE on
+      // an advance payment, not the amount already paid. Fully-paid advance
+      // receipts don't show here since there's nothing left owed on them.
+      const latestUnpaidAdvance = receipts
+        .filter(rec => rec.roomNumber === rNum && (rec.packageName || rec.paymentType || '') === 'advance' && rec.isPartPayment && (rec.balanceDue || 0) > 0)
         .sort((a, b) => new Date(b.receiptDate || 0) - new Date(a.receiptDate || 0))[0];
-      const advanceAmt = latestAdvanceReceipt ? (latestAdvanceReceipt.amountPaid ?? latestAdvanceReceipt.totalAmount ?? 0) : 0;
-      const advanceDueDate = latestAdvanceReceipt?.toDate ? new Date(latestAdvanceReceipt.toDate) : null;
+      const advanceAmt = latestUnpaidAdvance ? (latestUnpaidAdvance.balanceDue || 0) : 0;
+      const advanceDueDate = latestUnpaidAdvance?.toDate ? new Date(latestUnpaidAdvance.toDate) : null;
 
       return {
         roomNumber: rNum,
@@ -487,7 +502,7 @@ export default function DuesAndPayments() {
               doPrint(`Rooms Due This Month — ${MONTHS[curMon-1]} ${curYr}`, `
                 <h2>Rooms Due This Month — ${MONTHS[curMon-1]} ${curYr} (1–${monthEndDay})</h2>
                 <p>Grand Total Due: ₹${totalDueAll.toLocaleString('en-IN')} across ${roomsDueThisMonth.length} rooms</p>
-                <table><thead><tr><th>Room</th><th>Members</th><th>Start</th><th>Rent Due Date</th><th>Rent Due</th><th>Electric Due</th><th>Electric Due Date</th><th>Advance Rent</th><th>Advance Due Date</th><th>Total Due</th></tr></thead>
+                <table><thead><tr><th>Room</th><th>Members</th><th>Start</th><th>Rent Due Date</th><th>Rent Due</th><th>Electric Due</th><th>Electric Due Date</th><th>Advance Due</th><th>Advance Due Date</th><th>Total Due</th></tr></thead>
                 <tbody>${rows}</tbody></table>`);
             }}>🖨 Print Dues List</button>
           </div>
@@ -507,7 +522,7 @@ export default function DuesAndPayments() {
                       <th>Rent Due</th>
                       <th>Electric Due</th>
                       <th>Electric Due Date</th>
-                      <th>Advance Rent</th>
+                      <th>Advance Due</th>
                       <th>Advance Due Date</th>
                       <th>Total Due</th>
                       <th>WhatsApp</th>
@@ -582,7 +597,7 @@ export default function DuesAndPayments() {
                               </span>
                             ) : <span style={{color:'var(--text3)'}}>—</span>}
                           </td>
-                          <td style={{color:g.advanceAmt>0?'var(--text)':'var(--text3)',fontWeight:g.advanceAmt>0?600:400}}>
+                          <td style={{color:g.advanceAmt>0?'#f39c12':'var(--text3)',fontWeight:g.advanceAmt>0?700:400}}>
                             {g.advanceAmt>0 ? fmtM(g.advanceAmt) : '—'}
                           </td>
                           <td style={{fontSize:'0.78rem',color:'var(--text2)'}}>
@@ -604,6 +619,7 @@ export default function DuesAndPayments() {
                                     ``,
                                     g.rentDue>0 ? `🏠 Rent Due: *₹${g.rentDue.toLocaleString('en-IN')}*` : '',
                                     g.elecDue>0 ? `⚡ Electric Due: *₹${g.elecDue.toLocaleString('en-IN')}*${g.elecReading?.dueDate ? ` (by ${new Date(g.elecReading.dueDate).toLocaleDateString('en-IN')})` : ''}` : '',
+                                    g.advanceAmt>0 ? `📌 Advance Due: *₹${g.advanceAmt.toLocaleString('en-IN')}*${g.advanceDueDate ? ` (by ${g.advanceDueDate.toLocaleDateString('en-IN')})` : ''}` : '',
                                     ``,
                                     `💰 *Total Due: ₹${g.totalDue.toLocaleString('en-IN')}*`,
                                     ``,
@@ -638,6 +654,7 @@ export default function DuesAndPayments() {
                                       g.validityTo ? `⏰ Validity: *${g.validityFrom?g.validityFrom.toLocaleDateString('en-IN'):'—'} → ${g.validityTo.toLocaleDateString('en-IN')}*` : '',
                                       g.rentDue>0 ? `🏠 Rent Due: *₹${g.rentDue.toLocaleString('en-IN')}*` : '',
                                       g.elecDue>0 ? `⚡ Electric Due: *₹${g.elecDue.toLocaleString('en-IN')}*${g.elecReading?.dueDate ? ` (by ${new Date(g.elecReading.dueDate).toLocaleDateString('en-IN')})` : ''}` : '',
+                                      g.advanceAmt>0 ? `📌 Advance Due: *₹${g.advanceAmt.toLocaleString('en-IN')}*${g.advanceDueDate ? ` (by ${g.advanceDueDate.toLocaleDateString('en-IN')})` : ''}` : '',
                                       `💰 *Total Due: ₹${g.totalDue.toLocaleString('en-IN')}*`,
                                       ``,`Please clear dues. Late payment fine: ₹50/day.`,
                                       `Share your payment receipt on Mob. No. 9826400917`,
@@ -1011,4 +1028,4 @@ export default function DuesAndPayments() {
       )}
     </div>
   );
-} 
+}

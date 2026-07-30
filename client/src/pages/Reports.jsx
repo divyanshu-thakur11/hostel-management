@@ -17,6 +17,23 @@ const PIE_COLORS = Object.values(C);
 const fmt  = (n) => Number(n || 0).toLocaleString('en-IN');
 const fmtK = (v) => v >= 100000 ? `₹${(v/100000).toFixed(1)}L` : v >= 1000 ? `₹${Math.round(v/1000)}k` : `₹${v}`;
 
+// The actual INCOME portion of a receipt — excludes advance deposits, which
+// are refundable security deposits and not real revenue. A dedicated Advance
+// receipt contributes ₹0 here; a Final Bill that bundles an advance component
+// alongside rent/electric has just that advance portion carved out (scaled by
+// how much of the bill has actually been paid, for part payments).
+const realIncomeAmount = (r) => {
+  const paid = r.amountPaid ?? r.totalAmount ?? 0;
+  const type = r.packageName || r.paymentType || '';
+  if (type === 'advance') return 0;
+  if (type === 'final' && r.advanceComponent > 0 && r.totalAmount > 0) {
+    const paidRatio = r.totalAmount > 0 ? paid / r.totalAmount : 1;
+    const advancePaid = r.advanceComponent * paidRatio;
+    return Math.max(0, paid - advancePaid);
+  }
+  return paid;
+};
+
 /* ── Reusable tooltip ──────────────────────────────────────────────────────── */
 const CT = ({ active, payload, label }) => {
   if (!active || !payload?.length) return null;
@@ -67,9 +84,15 @@ function TaxSummary({ receipts, salary }) {
   const rentIncome    = yearReceipts.filter(r=>r.packageName==='rent').reduce((s,r)=>s+(r.amountPaid||r.totalAmount||0),0);
   const electricIncome= yearReceipts.filter(r=>r.packageName==='electric').reduce((s,r)=>s+(r.amountPaid||r.totalAmount||0),0);
   const advanceIncome = yearReceipts.filter(r=>r.packageName==='advance').reduce((s,r)=>s+(r.amountPaid||r.totalAmount||0),0);
-  const finalIncome   = yearReceipts.filter(r=>r.packageName==='final').reduce((s,r)=>s+(r.amountPaid||r.totalAmount||0),0);
+  // finalIncome uses realIncomeAmount so a Final Bill's bundled advance
+  // component (Advance + Electric + Rent bills) is carved out here too —
+  // not just dedicated Advance receipts.
+  const finalIncome   = yearReceipts.filter(r=>r.packageName==='final').reduce((s,r)=>s+realIncomeAmount(r),0);
   const otherIncome   = yearReceipts.filter(r=>!['rent','electric','advance','final'].includes(r.packageName)).reduce((s,r)=>s+(r.amountPaid||r.totalAmount||0),0);
-  const grossIncome   = rentIncome + electricIncome + advanceIncome + finalIncome + otherIncome;
+  // Gross Income excludes Advance Received — it's a refundable security
+  // deposit, not revenue. (Advance Received is still shown as its own line
+  // below for reference; it just doesn't count toward the taxable total.)
+  const grossIncome   = rentIncome + electricIncome + finalIncome + otherIncome;
   const salaryExp     = yearSalary.reduce((s,r)=>s+(r.netSalary||0),0);
   const maintExp      = yearSalary.reduce((s,r)=>s+(r.maintenanceCosts||[]).reduce((a,c)=>a+(c.amount||0),0),0);
   const totalExpenses = salaryExp + maintExp;
@@ -91,10 +114,10 @@ function TaxSummary({ receipts, salary }) {
       <table><thead><tr><th>Income Head</th><th class="right">Amount (₹)</th></tr></thead><tbody>
         <tr><td>Rent Collected</td><td class="right">₹${rentIncome.toLocaleString('en-IN')}</td></tr>
         <tr><td>Electric Bill Collected</td><td class="right">₹${electricIncome.toLocaleString('en-IN')}</td></tr>
-        <tr><td>Advance Received</td><td class="right">₹${advanceIncome.toLocaleString('en-IN')}</td></tr>
         <tr><td>Final Bills Collected</td><td class="right">₹${finalIncome.toLocaleString('en-IN')}</td></tr>
         <tr><td>Other Income</td><td class="right">₹${otherIncome.toLocaleString('en-IN')}</td></tr>
         <tr class="total"><td>Total Gross Income</td><td class="right">₹${grossIncome.toLocaleString('en-IN')}</td></tr>
+        <tr><td style="color:#888;font-style:italic">Advance Received (excluded — refundable deposit)</td><td class="right" style="color:#888;font-style:italic">₹${advanceIncome.toLocaleString('en-IN')}</td></tr>
       </tbody></table>
       <table><thead><tr><th>Expenditure Head</th><th class="right">Amount (₹)</th></tr></thead><tbody>
         <tr><td>Staff Salary</td><td class="right">₹${salaryExp.toLocaleString('en-IN')}</td></tr>
@@ -136,7 +159,6 @@ function TaxSummary({ receipts, salary }) {
             {[
               {label:'Rent Collected',     value:rentIncome},
               {label:'Electric Collected', value:electricIncome},
-              {label:'Advance Received',   value:advanceIncome},
               {label:'Final Bills',        value:finalIncome},
               {label:'Other Income',       value:otherIncome},
             ].map((row,i)=>(
@@ -148,6 +170,11 @@ function TaxSummary({ receipts, salary }) {
             <div style={{display:'flex',justifyContent:'space-between',padding:'10px 0 0',fontSize:'1rem',fontFamily:'Rajdhani',fontWeight:700,color:'var(--success)'}}>
               <span>Gross Income</span><span>₹{grossIncome.toLocaleString('en-IN')}</span>
             </div>
+            {advanceIncome > 0 && (
+              <div style={{display:'flex',justifyContent:'space-between',padding:'8px 0 0',fontSize:'0.78rem',color:'var(--text3)',fontStyle:'italic'}}>
+                <span>Advance Received (excluded — refundable deposit)</span><span>₹{advanceIncome.toLocaleString('en-IN')}</span>
+              </div>
+            )}
           </div>
 
           <div style={{background:'rgba(231,76,60,0.04)',border:'1px solid rgba(231,76,60,0.2)',borderRadius:8,padding:'14px 16px'}}>
@@ -217,14 +244,83 @@ export default function Reports() {
 
   /* ── Base numbers ── */
   const activeMembers  = members.filter(m => m.isActive !== false && m.roomNumber);
-  const totalIncome    = receipts.reduce((s,r) => s + (r.amountPaid || r.totalAmount || 0), 0);
-  const cashTotal      = receipts.filter(r=>r.modeOfPayment==='cash').reduce((s,r)=>s+(r.amountPaid||r.totalAmount||0),0);
-  const onlineTotal    = receipts.filter(r=>r.modeOfPayment==='online').reduce((s,r)=>s+(r.amountPaid||r.totalAmount||0),0);
+  // Total Income excludes refundable advance deposits (see realIncomeAmount) —
+  // an advance isn't revenue, and counting it here was inflating Total Income,
+  // Net Balance, and Net Margin throughout this page.
+  const totalIncome    = receipts.reduce((s,r) => s + realIncomeAmount(r), 0);
+  const advanceCollected = receipts.filter(r => (r.packageName||r.paymentType)==='advance').reduce((s,r)=>s+(r.amountPaid||r.totalAmount||0),0);
+  const cashTotal      = receipts.filter(r=>r.modeOfPayment==='cash').reduce((s,r)=>s+realIncomeAmount(r),0);
+  const onlineTotal    = receipts.filter(r=>r.modeOfPayment==='online').reduce((s,r)=>s+realIncomeAmount(r),0);
   const totalSalary    = salary.reduce((s,r)=>s+(r.netSalary||0),0);
   const totalMaint     = salary.reduce((s,r)=>s+(r.maintenanceCosts||[]).reduce((a,c)=>a+(c.amount||0),0),0);
   const totalExpend    = totalSalary + totalMaint;
   const netBalance     = totalIncome - totalExpend;
-  const totalDues      = receipts.filter(r=>r.isPartPayment&&(r.balanceDue||0)>0).reduce((s,r)=>s+(r.balanceDue||0),0);
+  // Pending Dues — mirrors the real due-tracking logic used in Dues & Payments
+  // (paid-through date for rent, per-reading due for electric), rather than
+  // the old simplistic "any part-payment with a balance" check, which could
+  // wildly disagree with what the Dues & Payments tab actually shows.
+  const totalDues = useMemo(() => {
+    const today   = new Date();
+    const curMon  = today.getMonth() + 1;
+    const curYr   = today.getFullYear();
+    const monthEnd = new Date(curYr, curMon, 0, 23, 59, 59, 999);
+
+    const roomNumbers = [...new Set(members.filter(m => m.isActive !== false && m.roomNumber).map(m => m.roomNumber))];
+    let sum = 0;
+
+    roomNumbers.forEach(rNum => {
+      const roomActiveMembers = members.filter(m => m.roomNumber === rNum && m.isActive !== false);
+
+      // Rent: same "paid through" logic as Dues & Payments — rent is only
+      // counted as due if the room's earliest paid-through date doesn't
+      // extend past the end of this month.
+      const memberRents  = roomActiveMembers.map(m => m.rent || 0).filter(v => v > 0);
+      const fixedRent    = memberRents.length ? Math.max(...memberRents) : 0;
+      const leaveDates   = roomActiveMembers.map(m => m.roomLeavingDate).filter(Boolean).map(d => new Date(d));
+      const paidThrough  = leaveDates.length ? new Date(Math.min(...leaveDates)) : null;
+      const rentOwed     = fixedRent > 0 && (!paidThrough || paidThrough <= monthEnd);
+      if (rentOwed) {
+        const latestRentReceipt = receipts
+          .filter(rec => rec.roomNumber === rNum && (rec.packageName || rec.paymentType || '') !== 'electric' && (rec.packageName || rec.paymentType || '') !== 'advance')
+          .sort((a, b) => new Date(b.receiptDate || 0) - new Date(a.receiptDate || 0))[0];
+        sum += (latestRentReceipt && latestRentReceipt.isPartPayment && (latestRentReceipt.balanceDue || 0) > 0)
+          ? latestRentReceipt.balanceDue
+          : fixedRent;
+      }
+
+      // Electric: check EVERY reading for this room (not just this month's),
+      // same as Dues & Payments — an unpaid bill from a prior month still
+      // counts even after the calendar has moved on.
+      electric.filter(e => e.roomNumber === rNum).forEach(reading => {
+        const waived = reading.paymentStatus === 'waived';
+        const manualPaid   = !waived && reading.manualOverride && reading.paymentStatus === 'paid';
+        const manualUnpaid = !waived && reading.manualOverride && reading.paymentStatus === 'unpaid';
+        const total = waived ? 0 : (reading.totalAmount || 0);
+        const readingMonthYearStr = `${reading.year}-${String(reading.month).padStart(2, '0')}`;
+        const isForThisReading = (rec) => rec.monthYear
+          ? rec.monthYear === readingMonthYearStr
+          : (rec.receiptDate && new Date(rec.receiptDate).getFullYear() === reading.year && new Date(rec.receiptDate).getMonth() + 1 === reading.month);
+        const paidDirect = (waived || manualUnpaid) ? 0 : receipts
+          .filter(rec => rec.roomNumber === rNum && (rec.packageName === 'electric' || rec.paymentType === 'electric') && isForThisReading(rec))
+          .reduce((s, rec) => s + (rec.amountPaid ?? rec.totalAmount ?? 0), 0);
+        const paidInFinal = (waived || manualUnpaid) ? 0 : receipts
+          .filter(rec => rec.roomNumber === rNum && (rec.packageName === 'final' || rec.paymentType === 'final') && isForThisReading(rec))
+          .reduce((s, rec) => {
+            if (!(rec.electricAmount > 0)) return s;
+            const paid = rec.amountPaid ?? rec.totalAmount ?? 0;
+            const ratio = rec.totalAmount > 0 ? paid / rec.totalAmount : 1;
+            return s + (rec.electricAmount * ratio);
+          }, 0);
+        const directlyPaid = (!waived && !manualUnpaid && reading.paymentStatus === 'paid') ? total : 0;
+        const paid = manualUnpaid ? 0 : (paidDirect + paidInFinal + directlyPaid);
+        const due  = manualPaid ? 0 : Math.max(0, total - paid);
+        sum += due;
+      });
+    });
+
+    return sum;
+  }, [members, receipts, electric]);
+
   const maxRooms       = Math.max(...members.filter(m=>m.roomNumber).map(m=>m.roomNumber), 20);
 
   /* ── Monthly data (12 months) ── */
@@ -235,16 +331,17 @@ export default function Reports() {
       const key = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
       const lbl = d.toLocaleString('en-IN', { month:'short', year:'2-digit' });
       if (!map[key]) map[key] = { key, label:lbl, income:0, rent:0, electric:0, advance:0, other:0, count:0, cash:0, online:0 };
-      const amt  = r.amountPaid || r.totalAmount || 0;
-      const type = r.packageName || r.paymentType || 'other';
-      map[key].income += amt;
+      const amt      = r.amountPaid || r.totalAmount || 0;
+      const realAmt  = realIncomeAmount(r); // excludes refundable advance — this is what "income" actually means
+      const type     = r.packageName || r.paymentType || 'other';
+      map[key].income += realAmt;
       if (type === 'rent')          map[key].rent     += amt;
       else if (type === 'electric') map[key].electric += amt;
       else if (type === 'advance')  map[key].advance  += amt;
       else                          map[key].other    += amt;
       map[key].count += 1;
-      if (r.modeOfPayment === 'cash')   map[key].cash   += amt;
-      if (r.modeOfPayment === 'online') map[key].online += amt;
+      if (r.modeOfPayment === 'cash')   map[key].cash   += realAmt;
+      if (r.modeOfPayment === 'online') map[key].online += realAmt;
     });
     return Object.values(map).sort((a,b)=>a.key.localeCompare(b.key)).slice(-12);
   }, [receipts]);
@@ -257,7 +354,7 @@ export default function Reports() {
       if (!map[r.roomNumber]) map[r.roomNumber] = { room: r.roomNumber, total:0, rent:0, electric:0, count:0 };
       const amt  = r.amountPaid || r.totalAmount || 0;
       const type = r.packageName || r.paymentType || 'other';
-      map[r.roomNumber].total += amt;
+      map[r.roomNumber].total += realIncomeAmount(r); // excludes refundable advance
       if (type === 'rent')          map[r.roomNumber].rent     += amt;
       else if (type === 'electric') map[r.roomNumber].electric += amt;
       map[r.roomNumber].count += 1;
@@ -362,7 +459,7 @@ export default function Reports() {
     }
     // Dues warning
     if (totalDues > 0) {
-      ins.push({ icon:'⚠️', text:`₹${fmt(totalDues)} in <strong>pending dues</strong> from part payments — follow up needed`, color:C.red });
+      ins.push({ icon:'⚠️', text:`₹${fmt(totalDues)} in <strong>pending dues</strong> across rent and electricity — follow up needed`, color:C.red });
     }
     // Police verification gap
     const unverified = members.filter(m=>m.isActive!==false&&!m.policeFormVerified).length;
@@ -497,8 +594,9 @@ export default function Reports() {
             <StatCard icon="👥" label="Active Members"    value={activeMembers.length}        color={C.blue}  sub={`of ${members.length} total`} />
             <StatCard icon="💵" label="Cash Collected"    value={`₹${fmtK(cashTotal)}`}      sub={totalIncome>0?`${Math.round(cashTotal/totalIncome*100)}% of income`:''} />
             <StatCard icon="📱" label="Online Collected"  value={`₹${fmtK(onlineTotal)}`}    color={C.teal}  sub={totalIncome>0?`${Math.round(onlineTotal/totalIncome*100)}% of income`:''} />
-            <StatCard icon="⚠️" label="Pending Dues"      value={`₹${fmtK(totalDues)}`}      color={totalDues>0?C.red:'var(--text3)'} sub="Part payment balances" />
+            <StatCard icon="⚠️" label="Pending Dues"      value={`₹${fmtK(totalDues)}`}      color={totalDues>0?C.red:'var(--text3)'} sub="Rent + Electric owed" />
             <StatCard icon="🚔" label="Police Unverified" value={members.filter(m=>m.isActive!==false&&!m.policeFormVerified).length} color={C.orange} sub="Compliance gap" />
+            <StatCard icon="🔒" label="Advance Collected" value={`₹${fmtK(advanceCollected)}`} color={C.purple} sub="Refundable — not counted as income" />
           </div>
 
           {/* Income vs Expenditure Composed Chart */}
@@ -934,13 +1032,26 @@ export default function Reports() {
         const roomNums = [...new Set(members.filter(m => m.roomNumber && m.isActive !== false).map(m => m.roomNumber))].sort((a, b) => a - b);
 
         // Build lookup: "roomNum-year-month" → amountPaid
+        // Matched by the receipt's actual billing month (monthYear, e.g.
+        // "2026-07" — the Billing Month picked when the receipt was made),
+        // not the day it was created. A receipt made a few days early or late
+        // crossing a month boundary was previously showing up as paid for the
+        // wrong month here. Older receipts made before monthYear was captured
+        // fall back to receiptDate as a best effort.
         const paidMap = {};
         receipts.forEach(r => {
-          if (!r.roomNumber || !r.receiptDate) return;
+          if (!r.roomNumber) return;
           const type = r.packageName || r.paymentType || '';
           if (type === 'electric') return; // only rent-type payments
-          const d = new Date(r.receiptDate);
-          const key = `${r.roomNumber}-${d.getFullYear()}-${d.getMonth() + 1}`;
+          let year, month;
+          if (r.monthYear) {
+            [year, month] = r.monthYear.split('-').map(Number);
+          } else {
+            if (!r.receiptDate) return;
+            const d = new Date(r.receiptDate);
+            year = d.getFullYear(); month = d.getMonth() + 1;
+          }
+          const key = `${r.roomNumber}-${year}-${month}`;
           paidMap[key] = (paidMap[key] || 0) + (r.amountPaid ?? r.totalAmount ?? 0);
         });
 

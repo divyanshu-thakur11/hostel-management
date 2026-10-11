@@ -1,6 +1,7 @@
 import { useHostel } from '../context/HostelContext';
 import React, { useEffect, useState, useRef } from 'react';
 import { membersAPI, receiptsAPI, electricAPI, roomsAPI, whatsapp as wa } from '../utils/api';
+import FinalSettlement from './FinalSettlement';
 
 function numberToWords(num) {
   const ones = ['','One','Two','Three','Four','Five','Six','Seven','Eight','Nine','Ten','Eleven','Twelve','Thirteen','Fourteen','Fifteen','Sixteen','Seventeen','Eighteen','Nineteen'];
@@ -14,7 +15,21 @@ function numberToWords(num) {
   return words.trim();
 }
 
+// Two tabs: the existing room-wise billing summary, and the per-member Final Settlement.
 export default function FinalBilling() {
+  const [tab, setTab] = useState('room');
+  return (
+    <div>
+      <div className="tabs" style={{marginBottom:16}}>
+        <button className={`tab ${tab==='room'?'active':''}`} onClick={()=>setTab('room')}>📑 Room Billing Summary</button>
+        <button className={`tab ${tab==='settlement'?'active':''}`} onClick={()=>setTab('settlement')}>🧾 Final Settlement</button>
+      </div>
+      {tab === 'room' ? <RoomBillingSummary /> : <FinalSettlement />}
+    </div>
+  );
+}
+
+function RoomBillingSummary() {
   const { hostelSwitchCount } = useHostel();
   const [members,  setMembers]  = useState([]);
   const [receipts, setReceipts] = useState([]);

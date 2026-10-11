@@ -97,6 +97,20 @@ export const receiptsAPI = {
   update:         (id, d)  => api.put(`/receipts/${id}`, d),
   delete:         (id)     => api.delete(`/receipts/${id}`),
   clearDue:       (id)     => api.patch(`/receipts/${id}/clear-due`), 
+  // Installments: several payments (own amount/date/method/reference) against one bill
+  getInstallments:   (id)        => api.get(`/receipts/${id}/installments`),
+  addInstallment:    (id, d)     => api.post(`/receipts/${id}/installments`, d),
+  editInstallment:   (id, d)     => api.put(`/receipts/${id}/installment`, d),
+  deleteInstallment: (id, reason)=> api.delete(`/receipts/${id}/installment`, { data: { reason } }),
+  collectionSummary: (params)    => api.get('/receipts/collection-summary', { params }),
+};
+
+export const settlementsAPI = {
+  list:     ()          => api.get('/settlements'),
+  getMember:(key, includeRoom) => api.get(`/settlements/member/${key}`, { params: includeRoom ? { includeRoom: 1 } : {} }),
+  save:     (key, d)    => api.put(`/settlements/member/${key}`, d),
+  finalize: (key, d)    => api.post(`/settlements/member/${key}/finalize`, d),
+  reopen:   (key, reason) => api.post(`/settlements/member/${key}/reopen`, { reason }),
 };
 
 export const electricAPI = {
@@ -107,6 +121,8 @@ export const electricAPI = {
   create:             (data)   => api.post('/electric', data),
   update:             (id, d)  => api.put(`/electric/${id}`, d),
   updatePaymentStatus:(id, d)  => api.patch(`/electric/${id}/payment-status`, d),
+  editStartReading:   (id, d)  => api.patch(`/electric/${id}/start-reading`, d),
+  editEndReading:     (id, d)  => api.patch(`/electric/${id}/end-reading`, d),
   delete:             (id)     => api.delete(`/electric/${id}`),
 };
 
@@ -151,7 +167,8 @@ export const whatsapp = {
     const paidAmt = receipt.isPartPayment ? (receipt.amountPaid || 0) : (receipt.totalAmount || 0);
     const PKGl = { rent:'Rent / किराया', advance:'Advance / एडवांस', electric:'Electric / बिजली', final:'Final Bill / अंतिम', other:'Other / अन्य' };
     const typeLabel = PKGl[receipt.packageName] || receipt.packageName || '';
-    const modeLabel = receipt.modeOfPayment === 'online' ? 'Online / ऑनलाइन' : 'Cash / नगद';
+    const METHOD_NAMES = { cash:'Cash / नगद', upi:'UPI', bank_transfer:'Bank Transfer', card:'Card', cheque:'Cheque', online_other:'Online / ऑनलाइन' };
+    const modeLabel = METHOD_NAMES[receipt.paymentMethod] || (receipt.modeOfPayment === 'online' ? 'Online / ऑनलाइन' : 'Cash / नगद');
     const membersList = receipt.members?.length > 0 ? receipt.members.map(m=>m.name).join(', ') : (receipt.memberName || '—');
     const lines = [
       `🏠 *HOSTEL RECEIPT*`, `━━━━━━━━━━━━━━━━━━`,
@@ -162,11 +179,16 @@ export const whatsapp = {
       `💳 Type: ${typeLabel}`,
       `💵 Mode: ${modeLabel}`, ``,
     ];
-    if (receipt.isPartPayment && (receipt.balanceDue || 0) > 0) {
-      lines.push(`📊 Total Bill: ₹${(receipt.totalAmount||0).toLocaleString('en-IN')}`);
+    if (receipt.referenceNo) lines.splice(lines.length - 1, 0, `🔖 Ref: ${receipt.referenceNo}`);
+    const isInst = !!receipt.parentReceiptId;
+    const balNow = isInst ? (receipt.balanceAfter || 0) : (receipt.balanceDue || 0);
+    if (isInst || (receipt.isPartPayment && balNow > 0)) {
+      lines.push(`📊 Total Bill: ₹${((isInst ? receipt.billTotal : receipt.totalAmount)||0).toLocaleString('en-IN')}`);
+      if (isInst) lines.push(`🔢 Installment #${receipt.installmentNo || ''}`);
       lines.push(`✅ Paid Today: *₹${paidAmt.toLocaleString('en-IN')}*`);
       if (receipt.amountInWords) lines.push(`   (${receipt.amountInWords})`);
-      lines.push(`❗ *Balance Due: ₹${(receipt.balanceDue||0).toLocaleString('en-IN')}*`);
+      if (receipt.paymentBreakdownText) lines.push(`🧮 ${receipt.paymentBreakdownText}`);
+      lines.push(balNow > 0 ? `❗ *Balance Due: ₹${balNow.toLocaleString('en-IN')}*` : `✅ *Bill fully paid*`);
     } else {
       lines.push(`💰 *Amount: ₹${paidAmt.toLocaleString('en-IN')}*`);
       if (receipt.amountInWords) lines.push(`   (${receipt.amountInWords})`);

@@ -7,6 +7,7 @@ const Receipt = require('../models/Receipt');
 const Electric = require('../models/Electric');
 const Salary = require('../models/Salary');
 const Hostel = require('../models/Hostel');
+const Settlement = require('../models/Settlement');
 const logger = require('../utils/logger');
 
 router.use(authMiddleware, ownerOnly);
@@ -16,20 +17,21 @@ router.get('/export-json', async (req, res, next) => {
   try {
     const hostelId = req.hostelId; // from JWT
     const q = hostelId ? { hostelId } : {};
-    const [members, archived, receipts, electric, salaries, hostels] = await Promise.all([
+    const [members, archived, receipts, electric, salaries, hostels, settlements] = await Promise.all([
       Member.find(q).lean(),
       ArchivedMember.find(q).lean(),
       Receipt.find(q).lean(),
       Electric.find(q).lean(),
       Salary.find(q).lean(),
       Hostel.find({ isActive: true }).lean(),
+      Settlement.find(q).lean(),
     ]);
     const backup = {
       exportedAt: new Date().toISOString(),
       version: '8.0',
       hostelId: hostelId || 'all',
       counts: { members: members.length, archived: archived.length, receipts: receipts.length, electric: electric.length, salaries: salaries.length },
-      data: { hostels, members, archivedMembers: archived, receipts, electric, salaries },
+      data: { hostels, members, archivedMembers: archived, receipts, electric, salaries, settlements },
     };
     res.setHeader('Content-Type', 'application/json');
     res.setHeader('Content-Disposition', `attachment; filename="hostel-backup-${new Date().toISOString().split('T')[0]}.json"`);

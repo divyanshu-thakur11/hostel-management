@@ -2,6 +2,8 @@ import { useHostel } from '../context/HostelContext';
 import React, { useEffect, useState, useCallback } from 'react';
 import { membersAPI, receiptsAPI, electricAPI, roomsAPI, whatsapp as wa } from '../utils/api';
 import { useToast } from '../context/ToastContext';
+import { computeRentDue, billMonthKey, monthLabel } from '../utils/dues';
+import { AddPaymentModal, PaymentHistoryModal } from '../components/InstallmentModals';
 
 const fmt   = (d) => d ? new Date(d).toLocaleDateString('en-IN', { day:'2-digit', month:'short', year:'numeric' }) : '—';
 const fmtM  = (n) => `₹${(n||0).toLocaleString('en-IN')}`;
@@ -42,6 +44,10 @@ export default function DuesAndPayments() {
 
   // Full electric history modal for a room
   const [elecHistoryRoom, setElecHistoryRoom] = useState(null);
+
+  // Installments: add a payment to / review the payments of a part-paid bill
+  const [payBill, setPayBill] = useState(null);
+  const [historyBill, setHistoryBill] = useState(null);
 
   const load = useCallback(() => {
     setLoading(true);
@@ -167,20 +173,11 @@ export default function DuesAndPayments() {
       // of this month, rent is owed for this month.
       const leaveDates = roomActiveMembers.map(m => m.roomLeavingDate).filter(Boolean).map(d => new Date(d));
       const paidThrough = leaveDates.length ? new Date(Math.min(...leaveDates)) : null;
-      const rentOwedThisMonth = fixedRent > 0 && (!paidThrough || paidThrough <= monthEnd);
-
-      let rentDue = 0;
-      if (rentOwedThisMonth) {
-        // If the most recent rent-type receipt for this room is an unresolved
-        // part payment, show exactly what's left of it rather than the full
-        // rent (so a ₹2,000 top-up needed doesn't get shown as the full rent).
-        const latestRentReceipt = receipts
-          .filter(rec => rec.roomNumber === rNum && (rec.packageName || rec.paymentType || '') !== 'electric')
-          .sort((a, b) => new Date(b.receiptDate || 0) - new Date(a.receiptDate || 0))[0];
-        rentDue = (latestRentReceipt && latestRentReceipt.isPartPayment && (latestRentReceipt.balanceDue || 0) > 0)
-          ? latestRentReceipt.balanceDue
-          : fixedRent;
-      }
+      // Rent is kept as separate pieces so an old unpaid balance and the new
+      // month's rent never overwrite each other (see utils/dues.js):
+      //   previous outstanding + this month's rent = total pending rent.
+      const rentCalc = computeRentDue({ roomNumber: rNum, fixedRent, paidThrough, today, receipts });
+      const rentDue = rentCalc.rentDue;
 
       // Electric: unlike rent (which is a single ongoing balance tracked via
       // paidThrough), each electric reading is its own separate bill for its
@@ -264,6 +261,7 @@ export default function DuesAndPayments() {
         fixedRent,
         paidThrough,
         rentDue,
+        rentCalc,
         elecTotal,
         elecPaid,
         elecDue,
@@ -318,6 +316,7 @@ export default function DuesAndPayments() {
         startDate, endDate, diffDays,
         validityFrom, validityTo,
         rentDue: due.rentDue || 0,
+        rentCalc: due.rentCalc,
         elecDue: due.elecDue || 0,
         elecTotal: due.elecTotal || 0,
         elecPaid: due.elecPaid || 0,
@@ -330,6 +329,16 @@ export default function DuesAndPayments() {
       };
     });
 
+
+  // "Previous ₹2,000 (Sep 2026) + Oct 2026 rent ₹5,000" — null when there is nothing to split.
+  const rentBreakdownText = (c) => {
+    if (!c) return '';
+    const parts = [];
+    if (c.previousBalance > 0) parts.push(`Previous balance ₹${c.previousBalance.toLocaleString('en-IN')} (${c.previousItems.map(i => monthLabel(i.monthKey)).join(', ')})`);
+    if (c.currentBillBalance > 0) parts.push(`${c.currentMonthLabel} bill pending ₹${c.currentBillBalance.toLocaleString('en-IN')}`);
+    if (c.newRent > 0) parts.push(`${c.currentMonthLabel} rent ₹${c.newRent.toLocaleString('en-IN')}`);
+    return parts.length > 1 || (parts.length === 1 && c.paidThisMonth > 0) ? parts.join(' + ') + (c.paidThisMonth > 0 ? ` · paid this month ₹${c.paidThisMonth.toLocaleString('en-IN')}` : '') : '';
+  };
 
   // Electric status shown in the dues table: 'waived' is the only manual flag;
   // paid/unpaid/partial are always derived from actual receipts (see roomDues above).
@@ -491,7 +500,7 @@ export default function DuesAndPayments() {
                   <td>${g.memberNames}</td>
                   <td>${g.startDate?g.startDate.toLocaleDateString('en-IN'):'—'}</td>
                   <td>${dateCell}</td>
-                  <td class="red">₹${(g.rentDue||0).toLocaleString('en-IN')}</td>
+                  <td class="red">₹${(g.rentDue||0).toLocaleString('en-IN')}${rentBreakdownText(g.rentCalc) ? `<br><small style="color:#888;font-size:10px">${rentBreakdownText(g.rentCalc)}</small>` : ''}</td>
                   <td class="${g.elecDue>0?'gold':''}">₹${(g.elecDue||0).toLocaleString('en-IN')}</td>
                   <td>${g.elecReading?.dueDate ? new Date(g.elecReading.dueDate).toLocaleDateString('en-IN') : (g.elecDue>0 && g.elecReading ? `${MONTHS[g.elecReading.month-1]} ${g.elecReading.year}` : '—')}</td>
                   <td>${g.advanceAmt>0?'₹'+g.advanceAmt.toLocaleString('en-IN'):'—'}</td>
@@ -556,6 +565,14 @@ export default function DuesAndPayments() {
                           </td>
                           <td style={{color:g.rentDue>0?'var(--danger)':'var(--text3)',fontWeight:g.rentDue>0?700:400}}>
                             {g.rentDue>0 ? fmtM(g.rentDue) : '—'}
+                            {g.rentCalc && g.rentDue>0 && (
+                              <div style={{fontWeight:400,fontSize:'0.66rem',color:'var(--text3)',marginTop:3,lineHeight:1.5,minWidth:150}}>
+                                {g.rentCalc.previousBalance>0 && <div>↩ Previous balance: <strong style={{color:'#9b59b6'}}>{fmtM(g.rentCalc.previousBalance)}</strong> <span>({g.rentCalc.previousItems.map(i=>monthLabel(i.monthKey)).join(', ')})</span></div>}
+                                {g.rentCalc.currentBillBalance>0 && <div>◐ {g.rentCalc.currentMonthLabel} bill pending: <strong>{fmtM(g.rentCalc.currentBillBalance)}</strong></div>}
+                                {g.rentCalc.newRent>0 && <div>🏷 {g.rentCalc.currentMonthLabel} rent: <strong>{fmtM(g.rentCalc.newRent)}</strong></div>}
+                                {g.rentCalc.paidThisMonth>0 && <div style={{color:'var(--success)'}}>✓ Paid this month: {fmtM(g.rentCalc.paidThisMonth)}</div>}
+                              </div>
+                            )}
                           </td>
                           <td>
                             <div style={{display:'flex',flexDirection:'column',gap:4}}>
@@ -623,7 +640,7 @@ export default function DuesAndPayments() {
                                     `🚪 Room No: *${g.roomNumber}*`,
                                     g.validityTo ? `⏰ Validity: *${g.validityFrom?g.validityFrom.toLocaleDateString('en-IN'):'—'} → ${g.validityTo.toLocaleDateString('en-IN')}*` : '',
                                     ``,
-                                    g.rentDue>0 ? `🏠 Rent Due: *₹${g.rentDue.toLocaleString('en-IN')}*` : '',
+                                    g.rentDue>0 ? `🏠 Rent Due: *₹${g.rentDue.toLocaleString('en-IN')}*${rentBreakdownText(g.rentCalc) ? ` (${rentBreakdownText(g.rentCalc)})` : ''}` : '',
                                     g.elecDue>0 ? `⚡ Electric Due: *₹${g.elecDue.toLocaleString('en-IN')}*${g.elecReading?.dueDate ? ` (by ${new Date(g.elecReading.dueDate).toLocaleDateString('en-IN')})` : g.elecReading ? ` (${MONTHS[g.elecReading.month-1]} ${g.elecReading.year})` : ''}` : '',
                                     g.advanceAmt>0 ? `📌 Advance Due: *₹${g.advanceAmt.toLocaleString('en-IN')}*${g.advanceDueDate ? ` (by ${g.advanceDueDate.toLocaleDateString('en-IN')})` : ''}` : '',
                                     ``,
@@ -658,7 +675,7 @@ export default function DuesAndPayments() {
                                       `Dear *${om.name}*,`,
                                       `🚪 Room No: *${g.roomNumber}*`,
                                       g.validityTo ? `⏰ Validity: *${g.validityFrom?g.validityFrom.toLocaleDateString('en-IN'):'—'} → ${g.validityTo.toLocaleDateString('en-IN')}*` : '',
-                                      g.rentDue>0 ? `🏠 Rent Due: *₹${g.rentDue.toLocaleString('en-IN')}*` : '',
+                                      g.rentDue>0 ? `🏠 Rent Due: *₹${g.rentDue.toLocaleString('en-IN')}*${rentBreakdownText(g.rentCalc) ? ` (${rentBreakdownText(g.rentCalc)})` : ''}` : '',
                                       g.elecDue>0 ? `⚡ Electric Due: *₹${g.elecDue.toLocaleString('en-IN')}*${g.elecReading?.dueDate ? ` (by ${new Date(g.elecReading.dueDate).toLocaleDateString('en-IN')})` : g.elecReading ? ` (${MONTHS[g.elecReading.month-1]} ${g.elecReading.year})` : ''}` : '',
                                       g.advanceAmt>0 ? `📌 Advance Due: *₹${g.advanceAmt.toLocaleString('en-IN')}*${g.advanceDueDate ? ` (by ${g.advanceDueDate.toLocaleDateString('en-IN')})` : ''}` : '',
                                       `💰 *Total Due: ₹${g.totalDue.toLocaleString('en-IN')}*`,
@@ -687,7 +704,7 @@ export default function DuesAndPayments() {
         <div className="card">
           <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:14}}>
             <div style={{padding:'10px 14px',background:'rgba(155,89,182,0.06)',borderRadius:6,fontSize:'0.83rem',color:'var(--text2)',flex:1}}>
-              💳 Receipts where only part of the bill was paid. Outstanding = Total − Paid.
+              💳 Bills where only part has been paid. Record each further payment (any amount, any method) with ➕ Pay — the balance updates automatically until it reaches zero.
             </div>
             <div style={{marginLeft:16,textAlign:'right',flexShrink:0}}>
               <div style={{fontSize:'0.72rem',color:'var(--text3)'}}>Total Outstanding</div>
@@ -700,7 +717,7 @@ export default function DuesAndPayments() {
             <div className="table-wrap">
               <table>
                 <thead>
-                  <tr><th>Bill No.</th><th>Date</th><th>Room</th><th>Member(s)</th><th>Total Bill</th><th>Paid</th><th>Balance Due</th><th>Mode</th><th>Action</th></tr>
+                  <tr><th>Bill No.</th><th>Date</th><th>Room</th><th>Member(s)</th><th>Total Bill</th><th>Paid So Far</th><th>Balance Due</th><th>Payments</th><th>Action</th></tr>
                 </thead>
                 <tbody>
                   {filterPP(partPayments).map(r=>(
@@ -710,16 +727,20 @@ export default function DuesAndPayments() {
                       <td>{r.roomNumber?<span className="badge badge-blue">R{r.roomNumber}</span>:'—'}</td>
                       <td style={{fontSize:'0.82rem',maxWidth:130,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}} title={r.memberName}>{r.memberName||'—'}</td>
                       <td style={{fontWeight:600}}>{fmtM(r.totalAmount)}</td>
-                      <td style={{color:'var(--success)',fontWeight:600}}>{fmtM(r.amountPaid)}</td>
+                      <td style={{color:'var(--success)',fontWeight:600}}>{fmtM(r.cumulativePaid ?? r.amountPaid)}</td>
                       <td><span style={{background:'rgba(155,89,182,0.12)',color:'#9b59b6',padding:'3px 10px',borderRadius:10,fontWeight:700,fontSize:'0.82rem'}}>{fmtM(r.balanceDue)}</span></td>
-                      <td><span className={`badge ${r.modeOfPayment==='online'?'badge-blue':'badge-green'}`} style={{fontSize:'0.68rem'}}>{r.modeOfPayment}</span></td>
+                      <td style={{fontSize:'0.74rem',color:'var(--text2)'}}>{(r.installmentCount||0)+1} · {monthLabel(billMonthKey(r))}</td>
                       <td>
+                        <div style={{display:'flex',gap:4,flexWrap:'wrap'}}>
+                        <button className="btn btn-xs" style={{background:'#f39c12',color:'white',border:'none',fontWeight:700}} onClick={()=>setPayBill(r)}>➕ Pay</button>
+                        <button className="btn btn-secondary btn-xs" onClick={()=>setHistoryBill(r._id)}>💳 History</button>
                         {r.memberMobile && (
                           <button style={{background:'#25d366',color:'white',border:'none',borderRadius:5,padding:'5px 10px',cursor:'pointer',fontSize:'0.72rem',fontWeight:700,whiteSpace:'nowrap'}}
                             onClick={()=>wa.sendCustom(r.memberMobile,
-                              `🏠 *PAYMENT REMINDER*\n\nDear ${r.memberName},\n\n📋 Bill No: ${r.billNumber}\n💰 Total Bill: ₹${r.totalAmount}\n✅ Paid: ₹${r.amountPaid}\n❗ *Balance Due: ₹${r.balanceDue}*\n\nPlease clear this at the earliest.\n\nThank you 🙏`
+                              `🏠 *PAYMENT REMINDER*\n\nDear ${r.memberName},\n\n📋 Bill No: ${r.billNumber}\n💰 Total Bill: ₹${r.totalAmount}\n✅ Paid: ₹${r.cumulativePaid ?? r.amountPaid}\n❗ *Balance Due: ₹${r.balanceDue}*\n\nPlease clear this at the earliest.\n\nThank you 🙏`
                             )}>📱 WhatsApp</button>
                         )}
+                        </div>
                       </td>
                     </tr>
                   ))}
@@ -927,6 +948,9 @@ export default function DuesAndPayments() {
           )}
         </div>
       )}
+
+      {payBill && <AddPaymentModal bill={payBill} onClose={()=>setPayBill(null)} onDone={()=>{ setPayBill(null); setHistoryBill(null); load(); }} />}
+      {historyBill && <PaymentHistoryModal billId={historyBill} onClose={()=>setHistoryBill(null)} onChanged={load} onAdd={(root)=>{ setHistoryBill(null); setPayBill(root); }} />}
 
       {/* ── Electric Waive Modal (moved here from Electric page — waive right from dues) ── */}
       {waiveTarget && (

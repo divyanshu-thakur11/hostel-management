@@ -33,6 +33,14 @@ export default function Electric() {
   const [waiveSaving,  setWaiveSaving]  = useState(false);
   const [receipts,     setReceipts]     = useState([]);
 
+  // Edit start / end meter reading (each independently)
+  const [editTarget, setEditTarget] = useState(null);   // { reading, field: 'startReading' | 'endReading' }
+  const [editValue,  setEditValue]  = useState('');
+  const [editReason, setEditReason] = useState('');
+  const [editSaving, setEditSaving] = useState(false);
+  const [editNotice, setEditNotice] = useState([]);       // neighbouring-month heads-ups after a save
+  const [historyOf,  setHistoryOf]  = useState(null);     // reading whose edit history is shown
+
   const toast = useToast();
 
   const load = () => electricAPI.getByRoom(selectedRoom).then(r => setReadings(r.data?.data || r.data || []));
@@ -145,6 +153,36 @@ export default function Electric() {
     } catch(e) {
       toast(e.response?.data?.message || 'Error updating', 'error');
     } finally { setWaiveSaving(false); }
+  };
+
+  const openEdit = (reading, field) => { setEditTarget({ reading, field }); setEditValue(String(reading[field])); setEditReason(''); setEditNotice([]); };
+  const closeEdit = () => { setEditTarget(null); setEditValue(''); setEditReason(''); };
+  // Live preview — same formula the server uses, so what you see is what gets saved.
+  const editPreview = (() => {
+    if (!editTarget) return null;
+    const r = editTarget.reading;
+    const start = editTarget.field === 'startReading' ? Number(editValue) : r.startReading;
+    const end   = editTarget.field === 'endReading'   ? Number(editValue) : r.endReading;
+    const units = end - start;
+    return { start, end, units, amount: units * (r.ratePerUnit || 8), valid: editValue !== '' && !isNaN(start) && !isNaN(end) && units >= 0 };
+  })();
+  const saveEdit = async () => {
+    if (!editPreview?.valid) { toast('End reading cannot be lower than start reading', 'error'); return; }
+    if (Number(editValue) === editTarget.reading[editTarget.field]) { toast('Value is unchanged', 'error'); return; }
+    if (!editReason.trim()) { toast('Please enter a reason for the correction', 'error'); return; }
+    setEditSaving(true);
+    try {
+      const fn = editTarget.field === 'startReading' ? electricAPI.editStartReading : electricAPI.editEndReading;
+      const res = await fn(editTarget.reading._id, { [editTarget.field]: Number(editValue), reason: editReason.trim() });
+      const c = res.data?.continuity || {};
+      const notes = [];
+      if (c.startMismatch) notes.push(`Previous month (${MONTHS[c.prev.month-1]} ${c.prev.year}) ended at ${c.prev.endReading}, but this month now starts at ${editTarget.field==='startReading'?Number(editValue):editTarget.reading.startReading}.`);
+      if (c.endMismatch)   notes.push(`Next month (${MONTHS[c.next.month-1]} ${c.next.year}) starts at ${c.next.startReading}, but this month now ends at ${editTarget.field==='endReading'?Number(editValue):editTarget.reading.endReading}.`);
+      toast('Reading corrected — units and bill recalculated');
+      load();
+      if (notes.length) { setEditNotice(notes); setEditTarget(null); } else closeEdit();
+    } catch(e) { toast(e.response?.data?.message || 'Error saving', 'error'); }
+    finally { setEditSaving(false); }
   };
 
   const units = form.endReading && form.startReading ? Number(form.endReading) - Number(form.startReading) : 0;
@@ -302,6 +340,11 @@ export default function Electric() {
                           title="Go back to automatic status (from receipts)"
                         >↩ Auto</button>
                       )}
+                      <button className="btn btn-secondary btn-xs" style={{fontSize:'0.72rem'}} onClick={() => openEdit(r, 'startReading')} title="Correct the starting meter reading">✏️ Start</button>
+                      <button className="btn btn-secondary btn-xs" style={{fontSize:'0.72rem'}} onClick={() => openEdit(r, 'endReading')} title="Correct the ending meter reading">✏️ End</button>
+                      {(r.editHistory || []).length > 0 && (
+                        <button className="btn btn-secondary btn-xs" style={{fontSize:'0.72rem'}} onClick={() => setHistoryOf(r)} title="Corrections made to this reading">🕒 {r.editHistory.length}</button>
+                      )}
                       <button className="btn btn-danger btn-xs" onClick={() => del(r._id)} style={{fontSize:'0.72rem'}}>🗑</button>
                     </div>
                   </td>
@@ -365,6 +408,76 @@ export default function Electric() {
               <button className="btn btn-secondary" onClick={() => setShowModal(false)}>Cancel</button>
               <button className="btn btn-primary" onClick={save}>Save Reading</button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Edit start / end reading ── */}
+      {editTarget && (
+        <div className="modal-overlay" onClick={e => e.target===e.currentTarget && !editSaving && closeEdit()}>
+          <div className="modal" style={{maxWidth:440}}>
+            <div className="modal-header">
+              <h3>✏️ Correct {editTarget.field === 'startReading' ? 'Starting' : 'Ending'} Reading</h3>
+              <button className="close-btn" onClick={closeEdit}>✕</button>
+            </div>
+            <div className="modal-body">
+              <div style={{background:'var(--bg3)',borderRadius:8,padding:'10px 14px',marginBottom:14,fontSize:'0.85rem'}}>
+                Room {editTarget.reading.roomNumber} · {MONTHS[editTarget.reading.month-1]} {editTarget.reading.year}
+                <div style={{color:'var(--text3)',fontSize:'0.78rem',marginTop:2}}>Now: {editTarget.reading.startReading} → {editTarget.reading.endReading} = {editTarget.reading.unitsConsumed} units = ₹{editTarget.reading.totalAmount} (₹{editTarget.reading.ratePerUnit}/unit)</div>
+              </div>
+              <div className="form-group">
+                <label>{editTarget.field === 'startReading' ? 'Start Reading' : 'End Reading'} (units)</label>
+                <input type="number" autoFocus value={editValue} onChange={e=>setEditValue(e.target.value)} />
+              </div>
+              <div style={{padding:'10px 14px',borderRadius:6,margin:'4px 0 12px',background:editPreview?.valid?'rgba(46,204,113,0.08)':'rgba(231,76,60,0.08)',border:`1px solid ${editPreview?.valid?'rgba(46,204,113,0.3)':'rgba(231,76,60,0.3)'}`,fontSize:'0.85rem'}}>
+                {editPreview?.valid
+                  ? <>New: {editPreview.start} → {editPreview.end} = <strong>{editPreview.units} units</strong> = <strong style={{color:'var(--accent)'}}>₹{editPreview.amount}</strong></>
+                  : <span style={{color:'var(--danger)'}}>End reading can't be lower than the start reading.</span>}
+              </div>
+              <div className="form-group">
+                <label>Reason for correction *</label>
+                <input value={editReason} onChange={e=>setEditReason(e.target.value)} placeholder="e.g. meter photo shows 1,254 not 1,245" />
+              </div>
+              <div style={{fontSize:'0.74rem',color:'var(--text3)',marginTop:6}}>Only this reading is changed. Rent dues and receipts already issued are not touched — the electric balance on Dues & Payments simply follows the corrected bill. The change is recorded in the audit history.</div>
+            </div>
+            <div className="modal-footer">
+              <button className="btn btn-secondary" onClick={closeEdit} disabled={editSaving}>Cancel</button>
+              <button className="btn btn-primary" onClick={saveEdit} disabled={editSaving || !editPreview?.valid}>{editSaving ? '⏳ Saving…' : 'Save Correction'}</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {editNotice.length > 0 && (
+        <div className="modal-overlay" onClick={e => e.target===e.currentTarget && setEditNotice([])}>
+          <div className="modal" style={{maxWidth:440}}>
+            <div className="modal-header"><h3>⚠️ Check neighbouring months</h3><button className="close-btn" onClick={()=>setEditNotice([])}>✕</button></div>
+            <div className="modal-body">
+              <p style={{fontSize:'0.85rem',color:'var(--text2)',marginBottom:10}}>Saved. Readings are meant to follow on from each other, so you may want to correct the neighbouring month too (it was <strong>not</strong> changed):</p>
+              {editNotice.map((n,i)=><div key={i} style={{background:'rgba(243,156,18,0.08)',border:'1px solid rgba(243,156,18,0.3)',borderRadius:6,padding:'8px 12px',marginBottom:8,fontSize:'0.82rem'}}>{n}</div>)}
+            </div>
+            <div className="modal-footer"><button className="btn btn-primary" onClick={()=>setEditNotice([])}>OK</button></div>
+          </div>
+        </div>
+      )}
+
+      {historyOf && (
+        <div className="modal-overlay" onClick={e => e.target===e.currentTarget && setHistoryOf(null)}>
+          <div className="modal" style={{maxWidth:640}}>
+            <div className="modal-header"><h3>🕒 Corrections — Room {historyOf.roomNumber} · {MONTHS[historyOf.month-1]} {historyOf.year}</h3><button className="close-btn" onClick={()=>setHistoryOf(null)}>✕</button></div>
+            <div className="modal-body"><div className="table-wrap"><table>
+              <thead><tr><th>When</th><th>Who</th><th>Changed</th><th>Units</th><th>Bill</th><th>Reason</th></tr></thead>
+              <tbody>{[...historyOf.editHistory].reverse().map((h,i)=>(
+                <tr key={i}>
+                  <td style={{fontSize:'0.76rem'}}>{new Date(h.editedAt).toLocaleString('en-IN',{day:'2-digit',month:'short',year:'2-digit',hour:'2-digit',minute:'2-digit'})}</td>
+                  <td style={{fontSize:'0.76rem'}}>{h.editedBy||'—'}</td>
+                  <td style={{fontSize:'0.78rem'}}>{h.field === 'startReading' ? 'Start' : h.field === 'endReading' ? 'End' : h.field === 'ratePerUnit' ? 'Rate' : 'Due date'}: {String(h.oldValue)} → <strong>{String(h.newValue)}</strong></td>
+                  <td style={{fontSize:'0.78rem'}}>{h.oldUnits} → {h.newUnits}</td>
+                  <td style={{fontSize:'0.78rem'}}>₹{h.oldAmount} → <strong>₹{h.newAmount}</strong></td>
+                  <td style={{fontSize:'0.76rem',color:'var(--text2)'}}>{h.reason||'—'}</td>
+                </tr>))}</tbody>
+            </table></div></div>
+            <div className="modal-footer"><button className="btn btn-secondary" onClick={()=>setHistoryOf(null)}>Close</button></div>
           </div>
         </div>
       )}

@@ -1,4 +1,5 @@
 import { useHostel } from '../context/HostelContext';
+import { computeRentDue, methodLabel } from '../utils/dues';
 import React, { useEffect, useState, useMemo } from 'react';
 import { membersAPI, receiptsAPI, electricAPI, salaryAPI, backupAPI } from '../utils/api';
 import {
@@ -278,15 +279,8 @@ export default function Reports() {
       const fixedRent    = memberRents.length ? Math.max(...memberRents) : 0;
       const leaveDates   = roomActiveMembers.map(m => m.roomLeavingDate).filter(Boolean).map(d => new Date(d));
       const paidThrough  = leaveDates.length ? new Date(Math.min(...leaveDates)) : null;
-      const rentOwed     = fixedRent > 0 && (!paidThrough || paidThrough <= monthEnd);
-      if (rentOwed) {
-        const latestRentReceipt = receipts
-          .filter(rec => rec.roomNumber === rNum && (rec.packageName || rec.paymentType || '') !== 'electric' && (rec.packageName || rec.paymentType || '') !== 'advance')
-          .sort((a, b) => new Date(b.receiptDate || 0) - new Date(a.receiptDate || 0))[0];
-        sum += (latestRentReceipt && latestRentReceipt.isPartPayment && (latestRentReceipt.balanceDue || 0) > 0)
-          ? latestRentReceipt.balanceDue
-          : fixedRent;
-      }
+      // Same rent maths as Dues & Payments (previous outstanding + this month's rent) — see utils/dues.js
+      sum += computeRentDue({ roomNumber: rNum, fixedRent, paidThrough, today, receipts }).rentDue;
 
       // Electric: check EVERY reading for this room (not just this month's),
       // same as Dues & Payments — an unpaid bill from a prior month still
@@ -952,6 +946,44 @@ export default function Reports() {
               <button className="btn btn-secondary btn-xs" onClick={exportFilteredCSV}>📥 CSV</button>
             </div>
           </div>
+          {/* Cash vs online (and per method) + day-by-day collection for the filtered payments.
+              Every installment is its own receipt, so each is counted once, on its own day and method. */}
+          {(() => {
+            const amt = (r) => r.amountPaid || r.totalAmount || 0;
+            const cash = filteredReceipts.filter(r => r.modeOfPayment !== 'online').reduce((a, r) => a + amt(r), 0);
+            const online = filteredReceipts.filter(r => r.modeOfPayment === 'online').reduce((a, r) => a + amt(r), 0);
+            const byMethod = {};
+            filteredReceipts.forEach(r => { const m = methodLabel(r); byMethod[m] = (byMethod[m] || 0) + amt(r); });
+            const days = {};
+            filteredReceipts.forEach(r => {
+              const k = new Date(r.receiptDate).toLocaleDateString('en-CA');
+              const d = (days[k] = days[k] || { k, cash: 0, online: 0, n: 0 });
+              d[r.modeOfPayment === 'online' ? 'online' : 'cash'] += amt(r); d.n += 1;
+            });
+            const dayRows = Object.values(days).sort((a, b) => b.k.localeCompare(a.k)).slice(0, 31);
+            return (
+              <div style={{marginBottom:14}}>
+                <div style={{display:'flex',gap:10,flexWrap:'wrap',marginBottom:10}}>
+                  <div style={{background:'var(--bg3)',borderRadius:8,padding:'8px 14px'}}><div style={{fontSize:'0.66rem',color:'var(--text3)',textTransform:'uppercase'}}>Cash</div><div style={{fontFamily:'Rajdhani',fontWeight:700,color:C.green}}>₹{fmt(cash)}</div></div>
+                  <div style={{background:'var(--bg3)',borderRadius:8,padding:'8px 14px'}}><div style={{fontSize:'0.66rem',color:'var(--text3)',textTransform:'uppercase'}}>Online</div><div style={{fontFamily:'Rajdhani',fontWeight:700,color:C.blue}}>₹{fmt(online)}</div></div>
+                  {Object.entries(byMethod).filter(([m]) => m !== 'Cash').map(([m, v]) => (
+                    <div key={m} style={{background:'var(--bg3)',borderRadius:8,padding:'8px 14px'}}><div style={{fontSize:'0.66rem',color:'var(--text3)',textTransform:'uppercase'}}>{m}</div><div style={{fontFamily:'Rajdhani',fontWeight:700}}>₹{fmt(v)}</div></div>
+                  ))}
+                </div>
+                {dayRows.length > 0 && (
+                  <details>
+                    <summary style={{cursor:'pointer',fontSize:'0.82rem',color:'var(--text2)',fontWeight:600}}>📅 Daily collection (cash / online) — last {dayRows.length} day(s) in this view</summary>
+                    <div className="table-wrap" style={{marginTop:8}}><table>
+                      <thead><tr><th>Date</th><th>Cash</th><th>Online</th><th>Total</th><th>Txns</th></tr></thead>
+                      <tbody>{dayRows.map(d => (
+                        <tr key={d.k}><td>{new Date(d.k).toLocaleDateString('en-IN')}</td><td style={{color:C.green}}>₹{fmt(d.cash)}</td><td style={{color:C.blue}}>₹{fmt(d.online)}</td><td style={{fontWeight:700}}>₹{fmt(d.cash + d.online)}</td><td>{d.n}</td></tr>
+                      ))}</tbody>
+                    </table></div>
+                  </details>
+                )}
+              </div>
+            );
+          })()}
           <div className="table-wrap">
             <table>
               <thead><tr><th>Date</th><th>Bill No</th><th>Room</th><th>Member</th><th>Type</th><th>Mode</th><th>Total</th><th>Paid</th><th style={{color:'var(--danger)'}}>Balance</th></tr></thead>
@@ -968,7 +1000,7 @@ export default function Reports() {
                       <span className="badge badge-yellow">{r.packageName}</span>
                       {r.isPartPayment && <span style={{marginLeft:4,fontSize:'0.65rem',background:'rgba(243,156,18,0.15)',color:C.orange,padding:'1px 6px',borderRadius:8}}>Part</span>}
                     </td>
-                    <td><span className={`badge ${r.modeOfPayment==='cash'?'badge-green':'badge-blue'}`}>{r.modeOfPayment}</span></td>
+                    <td><span className={`badge ${r.modeOfPayment==='cash'?'badge-green':'badge-blue'}`}>{methodLabel(r)}</span>{r.referenceNo && <div style={{fontSize:'0.62rem',color:'var(--text3)'}}>{r.referenceNo}</div>}</td>
                     <td style={{fontWeight:600}}>₹{fmt(r.totalAmount)}</td>
                     <td style={{color:C.green,fontWeight:600}}>₹{fmt(r.amountPaid||r.totalAmount)}</td>
                     <td style={{color:(r.balanceDue||0)>0?C.red:'var(--text3)',fontWeight:(r.balanceDue||0)>0?700:400}}>

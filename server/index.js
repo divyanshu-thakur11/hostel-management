@@ -68,6 +68,7 @@ app.use('/api/hostels',       require('./routes/hostels'));
 app.use('/api/rooms',         require('./routes/rooms'));
 app.use('/api/members',       require('./routes/members'));
 app.use('/api/receipts',      require('./routes/receipts'));
+app.use('/api/settlements',   require('./routes/settlements'));
 app.use('/api/electric',      require('./routes/electric'));
 app.use('/api/salary',        require('./routes/salary'));
 app.use('/api/dashboard',     require('./routes/dashboard'));
@@ -118,13 +119,14 @@ async function runAutoBackup() {
     if (!fs.existsSync(BACKUP_DIR)) fs.mkdirSync(BACKUP_DIR, { recursive: true });
     const ArchivedMember = require('./models/ArchivedMember');
     const Hostel         = require('./models/Hostel');
-    const [members, archived, receipts, electric, salaries, hostels] = await Promise.all([
+    const Settlement     = require('./models/Settlement');
+    const [members, archived, receipts, electric, salaries, hostels, settlements] = await Promise.all([
       Member.find().lean(), ArchivedMember.find().lean(), Receipt.find().lean(),
-      Electric.find().lean(), Salary.find().lean(), Hostel.find().lean(),
+      Electric.find().lean(), Salary.find().lean(), Hostel.find().lean(), Settlement.find().lean(),
     ]);
     const backup = {
       exportedAt: new Date().toISOString(), version: '10.0',
-      data: { hostels, members, archivedMembers: archived, receipts, electric, salaries },
+      data: { hostels, members, archivedMembers: archived, receipts, electric, salaries, settlements },
     };
     const dateStr  = new Date().toISOString().split('T')[0];
     const filepath = path.join(BACKUP_DIR, `hostel-backup-${dateStr}.enc`);

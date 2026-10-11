@@ -2,20 +2,9 @@ import { useHostel } from '../context/HostelContext';
 import React, { useEffect, useState, useRef, useCallback } from 'react';
 import { membersAPI, receiptsAPI, roomsAPI, electricAPI, whatsapp } from '../utils/api';
 import { useToast } from '../context/ToastContext';
-
-function numberToWords(num) {
-  const a = ['','One','Two','Three','Four','Five','Six','Seven','Eight','Nine','Ten','Eleven','Twelve','Thirteen','Fourteen','Fifteen','Sixteen','Seventeen','Eighteen','Nineteen'];
-  const b = ['','','Twenty','Thirty','Forty','Fifty','Sixty','Seventy','Eighty','Ninety'];
-  if (!num || num === 0) return 'Zero';
-  let n = Math.floor(num), w = '';
-  if (Math.floor(n/100000)>0){w+=numberToWords(Math.floor(n/100000))+' Lakh ';n%=100000;}
-  if (Math.floor(n/1000)>0){w+=numberToWords(Math.floor(n/1000))+' Thousand ';n%=1000;}
-  if (Math.floor(n/100)>0){w+=numberToWords(Math.floor(n/100))+' Hundred ';n%=100;}
-  if (n>0){if(n<20)w+=a[n];else w+=b[Math.floor(n/10)]+(n%10?' '+a[n%10]:'');}
-  return w.trim();
-}
-
-const PKG = { rent:'Rent / किराया', advance:'Advance / एडवांस', electric:'Electric / बिजली', final:'Final Bill / अंतिम', other:'Other / अन्य' };
+import ReceiptPrint, { numberToWords, PKG } from '../components/ReceiptPrint';
+import { AddPaymentModal, PaymentHistoryModal } from '../components/InstallmentModals';
+import { METHODS, methodLabel } from '../utils/dues';
 
 // A wide table's horizontal scrollbar normally only appears at the very
 // bottom of the (possibly very long) table, which means scrolling all the
@@ -72,7 +61,7 @@ const EMPTY = {
   roomNumber:'', memberMode:'all', memberName:'', memberMobile:'', memberId:'',
   packageName:'rent', fromDate:'', toDate:'', billingMonth:'',
   totalAmount:'', amountPaid:'', balanceDue:'0', isPartPayment:false, electricAmount:0,
-  modeOfPayment:'cash', notes:'',
+  modeOfPayment:'cash', paymentMethod:'cash', referenceNo:'', notes:'',
   receiptDate: new Date().toISOString().split('T')[0],
   // Final Bill breakdown — which components make it up, and their individual values
   finalBillType: 'rent_electric', // 'rent_electric' | 'advance_electric_rent'
@@ -96,8 +85,12 @@ export default function Receipts() {
   const [historyLoading, setHistoryLoading] = useState(false);
   const [showPrint, setShowPrint]   = useState(null);
   const [form, setForm]             = useState(EMPTY);
-  const [dueModal, setDueModal]     = useState(null);
-  const [dueForm, setDueForm]       = useState({ modeOfPayment:'cash', receiptDate:'', notes:'' });
+  const [payBill, setPayBill]       = useState(null);   // bill (root receipt) to add an installment to
+  const [historyBill, setHistoryBill] = useState(null);  // receipt id whose payment history is open
+  const [showDaily, setShowDaily]   = useState(false);
+  const [daily, setDaily]           = useState(null);
+  const [dailyFrom, setDailyFrom]   = useState(() => new Date(Date.now() - 6*86400000).toISOString().split('T')[0]);
+  const [dailyTo, setDailyTo]       = useState(() => new Date().toISOString().split('T')[0]);
   const [loading, setLoading]       = useState(false);
   const [search, setSearch]         = useState('');
   const [roomF, setRoomF]           = useState('');
@@ -323,6 +316,8 @@ export default function Receipts() {
       amountPaid,
       balanceDue,
       amountInWords:  numberToWords(amountPaid) + ' Rupees Only',
+      modeOfPayment:  form.paymentMethod === 'cash' ? 'cash' : 'online',
+      referenceNo:    form.paymentMethod === 'cash' ? '' : (form.referenceNo || ''),
       paymentType:    form.packageName,
       receiptNumber:  parseInt(form.receiptNumber) || 1,
       billSerial:     parseInt(form.billSerial) || 1,
@@ -347,7 +342,7 @@ export default function Receipts() {
         setShowModal(false);
         setEditingReceipt(null);
         loadReceipts(page);
-        setShowPrint(res.data);
+        openPrint(res.data);
         return;
       }
       const res = await receiptsAPI.create(payload);
@@ -367,7 +362,7 @@ export default function Receipts() {
         res.data?.duplicateReceiptNumberWarning ? 'warning' : undefined);
       setShowModal(false);
       loadReceipts(page);
-      setShowPrint(res.data);
+      openPrint(res.data);
     } catch(e) {
       toast(e.response?.data?.message || 'Error saving receipt', 'error');
     }
@@ -379,42 +374,27 @@ export default function Receipts() {
     catch(e) { toast('Error deleting', 'error'); }
   };
 
-  // Create a due-clearance receipt from an outstanding part payment
-  const saveDueReceipt = async () => {
-    if (!dueModal) return;
-    try {
-      const nums = await receiptsAPI.getNextNumbers();
-      const payload = {
-        ...nums.data,
-        roomNumber:     dueModal.roomNumber,
-        memberId:       dueModal.memberId,
-        memberName:     dueModal.memberName,
-        memberMobile:   dueModal.memberMobile,
-        members:        dueModal.members || [],
-        packageName:    dueModal.packageName || 'rent',  // Bug 3 fix: use original packageName not 'other'
-        paymentType:    dueModal.packageName || 'rent',
-        totalAmount:    dueModal.balanceDue,
-        amountPaid:     dueModal.balanceDue,
-        balanceDue:     0,
-        isPartPayment:  false,
-        modeOfPayment:  dueForm.modeOfPayment,
-        receiptDate:    dueForm.receiptDate || new Date().toISOString().split('T')[0],
-        notes:          dueForm.notes || `Due clearance against Bill No. ${dueModal.billNumber}`,
-        amountInWords:  numberToWords(dueModal.balanceDue) + ' Rupees Only',
-        fromDate:       dueModal.fromDate,
-        toDate:         dueModal.toDate,
-        monthYear:      dueModal.monthYear,
-        billingMonth:   dueModal.billingMonth,
-      };
-      await receiptsAPI.create(payload);
-      // Bug 2 fix: clear balanceDue on the original part-payment receipt
-      await receiptsAPI.clearDue(dueModal._id);
-      toast(`Due receipt created for ₹${dueModal.balanceDue.toLocaleString('en-IN')}`);
-      setDueModal(null);
-      loadReceipts(page);
-    } catch(e) {
-      toast(e.response?.data?.message || 'Error creating due receipt', 'error');
+  // Open the receipt print view. Bills paid in installments also get the full
+  // payment breakdown (₹600 Cash + ₹400 UPI = ₹1,000 Paid) attached.
+  const openPrint = async (r) => {
+    if (r && (r.isPartPayment || r.parentReceiptId || r.installmentCount > 0)) {
+      try {
+        const res = await receiptsAPI.getInstallments(r._id);
+        setShowPrint({ ...r, installments: res.data.installments, paymentBreakdownText: res.data.summary.breakdownText });
+        return;
+      } catch (e) { /* fall through to plain receipt */ }
     }
+    setShowPrint(r);
+  };
+  const openPrintById = async (id, bill) => {
+    let rec = receipts.find(x => x._id === id);
+    if (!rec) { try { const rr = await receiptsAPI.getByRoom(bill.root.roomNumber); rec = (rr.data || []).find(x => x._id === id); } catch (e) {} }
+    if (rec) setShowPrint({ ...rec, installments: bill.installments, paymentBreakdownText: bill.summary.breakdownText });
+  };
+  const openDaily = async () => {
+    setShowDaily(true); setDaily(null);
+    try { const r = await receiptsAPI.collectionSummary({ from: dailyFrom, to: dailyTo }); setDaily(r.data); }
+    catch (e) { toast('Could not load daily collection', 'error'); }
   };
 
   const openModal = async () => {
@@ -429,6 +409,7 @@ export default function Receipts() {
 
   // Open the same modal pre-filled for editing an existing receipt.
   const openEditModal = async (r) => {
+    if (r.parentReceiptId) { setHistoryBill(r._id); return; }   // installments are corrected in Payment History
     setEditingReceipt(r);
     const rm = members.filter(m => String(m.roomNumber) === String(r.roomNumber) && m.isActive !== false);
     setRoomMembers(rm);
@@ -456,6 +437,8 @@ export default function Receipts() {
       isPartPayment: !!r.isPartPayment,
       electricAmount: r.electricAmount || 0,
       modeOfPayment: r.modeOfPayment || 'cash',
+      paymentMethod: r.paymentMethod || (r.modeOfPayment === 'online' ? 'online_other' : 'cash'),
+      referenceNo: r.referenceNo || '',
       notes: r.notes || '',
       // Final Bill breakdown — uses the actual stored components when present
       // (receipts created after this fix); falls back to a best-effort guess
@@ -517,6 +500,7 @@ export default function Receipts() {
       <div className="page-header">
         <div><h2>Receipts</h2><p>{total} receipts · room-wise billing</p></div>
         <div style={{display:'flex',gap:8,flexWrap:'wrap'}}>
+          <button className="btn btn-secondary" onClick={openDaily}>📊 Daily Collection</button>
           <button className="btn btn-secondary" onClick={()=>{setShowResetModal(true);setResetResult(null);}}>📅 New Year Reset</button>
           <button className="btn btn-primary" onClick={openModal}>+ New Receipt</button>
         </div>
@@ -606,25 +590,28 @@ export default function Receipts() {
                       <td style={{fontWeight:600}}>₹{(r.totalAmount||0).toLocaleString('en-IN')}</td>
                       <td style={{color:'var(--success)',fontWeight:600}}>₹{(r.amountPaid||r.totalAmount||0).toLocaleString('en-IN')}</td>
                       <td style={{color:(r.balanceDue||0)>0?'var(--danger)':'var(--text3)',fontWeight:(r.balanceDue||0)>0?700:400,fontSize:'0.8rem'}}>
-                        {(r.balanceDue||0)>0?`₹${r.balanceDue.toLocaleString('en-IN')}`:'—'}
+                        {r.parentReceiptId ? (r.balanceAfter>0 ? <span title="Balance left on the bill after this installment">₹{r.balanceAfter.toLocaleString('en-IN')}</span> : '—') : ((r.balanceDue||0)>0?`₹${r.balanceDue.toLocaleString('en-IN')}`:'—')}
                       </td>
-                      <td><span className={`badge ${r.modeOfPayment==='online'?'badge-blue':'badge-green'}`} style={{fontSize:'0.68rem'}}>{r.modeOfPayment||'cash'}</span></td>
+                      <td><span className={`badge ${r.modeOfPayment==='online'?'badge-blue':'badge-green'}`} style={{fontSize:'0.68rem'}} title={r.referenceNo?`Ref: ${r.referenceNo}`:''}>{methodLabel(r)}</span>{r.referenceNo && <div style={{fontSize:'0.62rem',color:'var(--text3)'}}>{r.referenceNo}</div>}</td>
                       <td>
                         <div style={{display:'flex',gap:4,flexWrap:'wrap'}}>
-                          <button className="btn btn-success btn-xs" onClick={()=>setShowPrint(r)}>🖨</button>
+                          <button className="btn btn-success btn-xs" onClick={()=>openPrint(r)}>🖨</button>
                           <button className="btn btn-secondary btn-xs" onClick={()=>openEditModal(r)} title="Edit receipt">✏️</button>
                           <button className="btn btn-secondary btn-xs" onClick={()=>openRoomHistory(r.roomNumber)} title="Full receipt history for this room">🏠 History</button>
                           {(r.memberMobile||roomMembers[0]?.mobileNo) && (
                             <button className="btn btn-xs" style={{background:'#25d366',color:'white',border:'none'}}
                               onClick={()=>whatsapp.sendReceipt(r.memberMobile||'',r)} title="WhatsApp">📱</button>
                           )}
-                          {r.isPartPayment && (r.balanceDue||0) > 0 && (
+                          {!r.parentReceiptId && r.isPartPayment && (r.balanceDue||0) > 0 && (
                             <button className="btn btn-xs"
                               style={{background:'#f39c12',color:'white',border:'none',fontWeight:700,whiteSpace:'nowrap'}}
-                              onClick={()=>{ setDueModal(r); setDueForm({ modeOfPayment:'cash', receiptDate: new Date().toISOString().split('T')[0], notes:'' }); }}
-                              title="Generate due clearance receipt">
-                              ⚠️ Due
+                              onClick={()=>setPayBill(r)}
+                              title="Record another payment against this bill">
+                              ➕ Pay
                             </button>
+                          )}
+                          {(r.parentReceiptId || r.isPartPayment || r.installmentCount > 0) && (
+                            <button className="btn btn-secondary btn-xs" onClick={()=>setHistoryBill(r._id)} title="All payments on this bill">💳 {r.parentReceiptId ? `#${r.installmentNo||''}` : (r.installmentCount>0 ? `${r.installmentCount+1} pays` : 'Payments')}</button>
                           )}
                           <button className="btn btn-danger btn-xs" onClick={()=>del(r._id)}>Del</button>
                         </div>
@@ -769,14 +756,19 @@ export default function Receipts() {
                   </div>
                 )}
 
-                {/* Mode */}
+                {/* Method */}
                 <div className="form-group">
-                  <label>Payment Mode</label>
-                  <select value={form.modeOfPayment} onChange={e=>setForm(p=>({...p,modeOfPayment:e.target.value}))}>
-                    <option value="cash">Cash / नगद</option>
-                    <option value="online">Online / ऑनलाइन</option>
+                  <label>Payment Method</label>
+                  <select value={form.paymentMethod} onChange={e=>setForm(p=>({...p,paymentMethod:e.target.value,modeOfPayment:e.target.value==='cash'?'cash':'online'}))}>
+                    {METHODS.map(m=><option key={m.value} value={m.value}>{m.label}</option>)}
                   </select>
                 </div>
+                {form.paymentMethod !== 'cash' && (
+                  <div className="form-group">
+                    <label>Txn ID / Reference <span style={{fontSize:'0.68rem',color:'var(--text3)',fontWeight:400,textTransform:'none'}}>— optional</span></label>
+                    <input value={form.referenceNo} onChange={e=>setForm(p=>({...p,referenceNo:e.target.value}))} placeholder="UPI ref / UTR / cheque no." />
+                  </div>
+                )}
 
                 {/* From / To */}
                 <div className="form-group"><label>From Period</label><input type="date" value={form.fromDate} onChange={e=>setForm(p=>({...p,fromDate:e.target.value}))} /></div>
@@ -808,7 +800,7 @@ export default function Receipts() {
                 {form.isPartPayment && (
                   <>
                     <div className="form-group">
-                      <label>Amount Paid Now (₹)</label>
+                      <label>First Payment Now (₹)</label>
                       <input type="number" value={form.amountPaid} onChange={e=>handleAmountPaidChange(e.target.value)} placeholder="Amount received today" />
                     </div>
                     <div className="form-group">
@@ -910,115 +902,62 @@ export default function Receipts() {
         </div>
       )}
 
-      {/* ── Due Receipt Modal ──────────────────────────────────────────────── */}
-      {dueModal && (
-        <div className="modal-overlay" onClick={e=>e.target===e.currentTarget&&setDueModal(null)}>
-          <div className="modal" style={{maxWidth:460}}>
-            <div className="modal-header">
-              <h3>⚠️ Generate Due Receipt</h3>
-              <button className="close-btn" onClick={()=>setDueModal(null)}>✕</button>
-            </div>
+      {payBill && (
+        <AddPaymentModal bill={payBill} onClose={()=>setPayBill(null)}
+          onDone={(rec)=>{ setPayBill(null); setHistoryBill(null); loadReceipts(page); setShowPrint(rec); }} />
+      )}
+      {historyBill && (
+        <PaymentHistoryModal billId={historyBill} onClose={()=>setHistoryBill(null)}
+          onChanged={()=>loadReceipts(page)}
+          onAdd={(root)=>{ setHistoryBill(null); setPayBill(root); }}
+          onPrint={openPrintById} />
+      )}
+
+      {/* ── Daily collection: cash vs online, by method ── */}
+      {showDaily && (
+        <div className="modal-overlay" onClick={e=>e.target===e.currentTarget&&setShowDaily(false)}>
+          <div className="modal" style={{maxWidth:720}}>
+            <div className="modal-header"><h3>📊 Daily Collection</h3><button className="close-btn" onClick={()=>setShowDaily(false)}>✕</button></div>
             <div className="modal-body">
-              <div style={{background:'rgba(243,156,18,0.08)',border:'1px solid rgba(243,156,18,0.4)',borderRadius:6,padding:'12px 14px',marginBottom:16,fontSize:'0.88rem'}}>
-                <strong>{dueModal.memberName}</strong> · Room {dueModal.roomNumber}<br/>
-                <span style={{color:'var(--text2)',fontSize:'0.8rem'}}>Original Bill: <strong>{dueModal.billNumber}</strong></span><br/>
-                <div style={{marginTop:8,display:'flex',justifyContent:'space-between'}}>
-                  <span>Total Bill: ₹{(dueModal.totalAmount||0).toLocaleString('en-IN')}</span>
-                  <span>Already Paid: ₹{(dueModal.amountPaid||0).toLocaleString('en-IN')}</span>
-                </div>
-                <div style={{marginTop:6,fontFamily:'Rajdhani',fontSize:'1.2rem',fontWeight:700,color:'#c0392b'}}>
-                  Balance Due: ₹{(dueModal.balanceDue||0).toLocaleString('en-IN')}
-                </div>
+              <div style={{display:'flex',gap:8,alignItems:'center',marginBottom:12,flexWrap:'wrap'}}>
+                <input type="date" style={selStyle} value={dailyFrom} onChange={e=>setDailyFrom(e.target.value)} />
+                <span style={{color:'var(--text3)'}}>to</span>
+                <input type="date" style={selStyle} value={dailyTo} onChange={e=>setDailyTo(e.target.value)} />
+                <button className="btn btn-primary btn-xs" onClick={openDaily}>Show</button>
               </div>
-              <div className="form-grid">
-                <div className="form-group">
-                  <label>Payment Mode</label>
-                  <select value={dueForm.modeOfPayment} onChange={e=>setDueForm(p=>({...p,modeOfPayment:e.target.value}))}>
-                    <option value="cash">Cash / नगद</option>
-                    <option value="online">Online / ऑनलाइन</option>
-                  </select>
-                </div>
-                <div className="form-group">
-                  <label>Receipt Date</label>
-                  <input type="date" value={dueForm.receiptDate} onChange={e=>setDueForm(p=>({...p,receiptDate:e.target.value}))} />
-                </div>
-                <div className="form-group full">
-                  <label>Notes (optional)</label>
-                  <input value={dueForm.notes} onChange={e=>setDueForm(p=>({...p,notes:e.target.value}))} placeholder={`Due clearance against ${dueModal.billNumber}`} />
-                </div>
-              </div>
+              {!daily ? <div style={{textAlign:'center',padding:24,color:'var(--text3)'}}>⏳ Loading...</div> : (
+                <>
+                  <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:10,marginBottom:12}}>
+                    {[['Cash',daily.totals.cash,'var(--success)'],['Online',daily.totals.online,'var(--info)'],['Total',daily.totals.total,'var(--accent)']].map(([l,v,c])=>(
+                      <div key={l} style={{background:'var(--bg3)',borderRadius:8,padding:'10px 12px'}}>
+                        <div style={{fontSize:'0.66rem',color:'var(--text3)',textTransform:'uppercase'}}>{l}</div>
+                        <div style={{fontFamily:'Rajdhani',fontWeight:700,fontSize:'1.3rem',color:c}}>₹{v.toLocaleString('en-IN')}</div>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="table-wrap"><table>
+                    <thead><tr><th>Date</th><th>Cash</th><th>Online</th><th>Of which</th><th>Total</th><th>Txns</th></tr></thead>
+                    <tbody>
+                      {daily.days.length===0 ? <tr><td colSpan={6} style={{textAlign:'center',color:'var(--text3)'}}>No collections in this period</td></tr> : daily.days.map(d=>(
+                        <tr key={d.date}>
+                          <td>{new Date(d.date).toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'})}</td>
+                          <td style={{color:'var(--success)',fontWeight:600}}>₹{d.cash.toLocaleString('en-IN')}</td>
+                          <td style={{color:'var(--info)',fontWeight:600}}>₹{d.online.toLocaleString('en-IN')}</td>
+                          <td style={{fontSize:'0.72rem',color:'var(--text3)'}}>{Object.entries(d.byMethod).filter(([k])=>k!=='cash').map(([k,v])=>`${(METHODS.find(m=>m.value===k)||{label:k}).label} ₹${v.toLocaleString('en-IN')}`).join(' · ')||'—'}</td>
+                          <td style={{fontWeight:700}}>₹{d.total.toLocaleString('en-IN')}</td>
+                          <td>{d.count}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table></div>
+                  <div style={{fontSize:'0.72rem',color:'var(--text3)',marginTop:8}}>Counts every amount actually received (rent, electric, advance, installments) on the day and by the method it was taken. Each installment is counted once.</div>
+                </>
+              )}
             </div>
-            <div className="modal-footer">
-              <button className="btn btn-secondary" onClick={()=>setDueModal(null)}>Cancel</button>
-              <button className="btn btn-primary" onClick={saveDueReceipt}
-                style={{background:'#e67e22',border:'1px solid #d35400'}}>
-                Generate Due Receipt — ₹{(dueModal.balanceDue||0).toLocaleString('en-IN')}
-              </button>
-            </div>
+            <div className="modal-footer"><button className="btn btn-secondary" onClick={()=>setShowDaily(false)}>Close</button></div>
           </div>
         </div>
       )}
-    </div>
-  );
-}
-
-function ReceiptPrint({ receipt }) {
-  const fmt = d => d ? new Date(d).toLocaleDateString('en-IN',{day:'2-digit',month:'long',year:'numeric'}) : '—';
-  const paidAmt  = receipt.isPartPayment ? (receipt.amountPaid||0) : (receipt.totalAmount||0);
-  const words    = receipt.amountInWords || (numberToWords(paidAmt)+' Rupees Only');
-  const isPartPay= receipt.isPartPayment && (receipt.balanceDue||0) > 0;
-  const PKGl     = { rent:'Rent / किराया', advance:'Advance / एडवांस', electric:'Electric / बिजली', final:'Final Bill / अंतिम', other:'Other / अन्य' };
-  const membersList = receipt.members?.length > 0
-    ? receipt.members.map(m=>m.name).join(', ')
-    : receipt.memberName || '—';
-
-  return (
-    <div style={{fontFamily:'"Noto Sans",sans-serif',background:'white',color:'#111',padding:'28px',fontSize:'13px'}}>
-      <div style={{textAlign:'center',borderBottom:'2px solid #111',paddingBottom:12,marginBottom:16}}>
-        <div style={{fontSize:'1.5rem',fontWeight:700,letterSpacing:1}}>HOSTEL MANAGER</div>
-        <div style={{fontSize:'0.75rem',color:'#555',letterSpacing:'0.1em',textTransform:'uppercase'}}>
-          {isPartPay ? 'Part Payment Receipt' : 'Payment Receipt / भुगतान रसीद'}
-        </div>
-      </div>
-      <div style={{display:'flex',justifyContent:'space-between',marginBottom:10}}>
-        <div><span style={{color:'#555'}}>Date: </span><strong>{fmt(receipt.receiptDate)}</strong></div>
-        <div><span style={{color:'#555'}}>Receipt #</span><strong>{receipt.receiptNumber}</strong></div>
-      </div>
-      <div style={{marginBottom:12}}><span style={{color:'#555'}}>Bill No.: </span><strong style={{fontSize:'1rem',color:'#c00'}}>{receipt.billNumber||'—'}</strong></div>
-      {[
-        ['Members / सदस्य', membersList],
-        ['Room / कमरा', receipt.roomNumber ? `Room ${receipt.roomNumber}` : '—'],
-        ['Package / पैकेज', PKGl[receipt.packageName]||receipt.packageName],
-        ['From / दिनांक से', fmt(receipt.fromDate)],
-        ['To / दिनांक तक', fmt(receipt.toDate)],
-        ['Mode / भुगतान', receipt.modeOfPayment==='online'?'Online / ऑनलाइन':'Cash / नगद'],
-      ].map(([l,v],i)=>(
-        <div key={i} style={{display:'flex',justifyContent:'space-between',padding:'5px 0',borderBottom:'1px dashed #ddd'}}>
-          <span style={{color:'#555'}}>{l}</span><span style={{fontWeight:500}}>{v}</span>
-        </div>
-      ))}
-      {isPartPay && (
-        <div style={{margin:'12px 0',padding:'10px',background:'#fff8e1',border:'1px solid #f39c12',borderRadius:4}}>
-          <div style={{display:'flex',justifyContent:'space-between',marginBottom:4}}><span style={{color:'#555'}}>Total Bill</span><span style={{fontWeight:600}}>₹{(receipt.totalAmount||0).toLocaleString('en-IN')}</span></div>
-          <div style={{display:'flex',justifyContent:'space-between',marginBottom:4}}><span style={{color:'#555'}}>Paid Today</span><span style={{fontWeight:700,color:'#27ae60'}}>₹{paidAmt.toLocaleString('en-IN')}</span></div>
-          <div style={{display:'flex',justifyContent:'space-between',borderTop:'1px solid #f39c12',paddingTop:6,marginTop:4}}><span style={{color:'#c00',fontWeight:700}}>Balance Due</span><span style={{fontWeight:700,color:'#c00'}}>₹{(receipt.balanceDue||0).toLocaleString('en-IN')}</span></div>
-        </div>
-      )}
-      <div style={{margin:'14px 0',padding:'10px',background:'#f9f9f9',border:'1px solid #ddd',borderRadius:4}}>
-        <div style={{fontSize:'11px',color:'#777',textTransform:'uppercase',letterSpacing:1,marginBottom:3}}>Sum of Rupees Paid / भुगतान राशि शब्दों में</div>
-        <div style={{fontSize:'1rem',fontWeight:600,color:'#222'}}>{words}</div>
-      </div>
-      <div style={{textAlign:'center',padding:'14px',background:'#111',color:'white',borderRadius:6,margin:'10px 0'}}>
-        <div style={{fontSize:'11px',letterSpacing:'0.15em',textTransform:'uppercase',marginBottom:3,opacity:0.7}}>AMOUNT PAID</div>
-        <div style={{fontSize:'2rem',fontWeight:900}}>₹{paidAmt.toLocaleString('en-IN')}</div>
-        {isPartPay && <div style={{fontSize:'0.75rem',opacity:0.7,marginTop:3}}>Part Payment · Balance: ₹{(receipt.balanceDue||0).toLocaleString('en-IN')}</div>}
-      </div>
-      <div style={{display:'flex',justifyContent:'flex-end',marginTop:28}}>
-        <div style={{width:180,textAlign:'center'}}>
-          <div style={{borderTop:'1px solid #333',paddingTop:6,fontSize:'12px',color:'#555'}}>हस्ताक्षर / Signature</div>
-        </div>
-      </div>
-      {receipt.notes && <div style={{marginTop:10,fontSize:'11px',color:'#777'}}>Note: {receipt.notes}</div>}
     </div>
   );
 }

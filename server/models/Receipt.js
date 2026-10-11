@@ -43,10 +43,36 @@ const receiptSchema = new mongoose.Schema({
   advanceComponent: { type: Number },
 
   amountInWords: { type: String },
+  // modeOfPayment stays the two-way cash/online split that Reports, Dashboard and
+  // exports already use. paymentMethod is the finer detail (UPI, bank transfer…)
+  // and is always consistent with it: cash -> 'cash', everything else -> 'online'.
   modeOfPayment: { type: String, enum: ['cash','online'], default: 'cash' },
+  paymentMethod: { type: String, enum: ['cash','upi','bank_transfer','card','cheque','online_other'] },
+  referenceNo:   { type: String, trim: true },   // UPI txn id / UTR / cheque no.
   receiptDate:   { type: Date, default: Date.now },
   notes:         { type: String },
   isPaid:        { type: Boolean, default: true },
+
+  // ── Installments ───────────────────────────────────────────────────────
+  // A "bill" is the ROOT receipt (the first payment, with the full bill amount
+  // in totalAmount). Every later installment is its own receipt that points at
+  // the root through parentReceiptId and carries only its own amount.
+  //   root:  amountPaid = first payment, cumulativePaid = all installments,
+  //          balanceDue = what is still outstanding on the whole bill
+  //   child: totalAmount = amountPaid = this installment, balanceDue = 0
+  //          (balanceAfter / paidToDate / billTotal are display snapshots)
+  // Because only the root carries balanceDue, nothing that sums balanceDue
+  // (Dashboard, Dues) can ever count an installment twice, and because each
+  // installment keeps its own amountPaid + modeOfPayment, every existing
+  // report/collection total stays correct without change.
+  parentReceiptId:  { type: mongoose.Schema.Types.ObjectId, ref: 'Receipt', index: true },
+  installmentNo:    { type: Number, default: 1 },
+  installmentCount: { type: Number, default: 0 },   // root only: number of child installments
+  cumulativePaid:   { type: Number },               // root only
+  billTotal:        { type: Number },               // child snapshot
+  paidToDate:       { type: Number },               // child snapshot (after this installment)
+  balanceAfter:     { type: Number },               // child snapshot (after this installment)
+  clientRequestId:  { type: String, index: true, sparse: true }, // blocks double-submit duplicates
 }, { timestamps: true });
 
 receiptSchema.index({ roomNumber: 1, receiptDate: -1 });
@@ -54,12 +80,17 @@ receiptSchema.index({ billNumber: 1 });
 
 // On save, auto-set amountPaid = totalAmount if not a part payment
 receiptSchema.pre('save', function(next) {
+  // Installment receipts and roots that already have installments are kept
+  // consistent by recalcBill() in the controller — don't let this hook undo it.
+  if (this.parentReceiptId || (this.installmentCount || 0) > 0) return next();
   if (!this.isPartPayment) {
     this.amountPaid  = this.totalAmount;
     this.balanceDue  = 0;
   } else {
     this.balanceDue  = Math.max(0, (this.totalAmount || 0) - (this.amountPaid || 0));
   }
+  // A brand-new bill (no installments yet) has paid exactly its own first payment.
+  this.cumulativePaid = this.amountPaid;
   next();
 });
 

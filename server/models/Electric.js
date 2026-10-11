@@ -1,5 +1,19 @@
 const mongoose = require('mongoose');
 
+// One entry per correction to a meter reading (who changed what, and the effect on the bill).
+const readingEditSchema = new mongoose.Schema({
+  field:     { type: String },                 // 'startReading' | 'endReading' | 'ratePerUnit' | 'dueDate'
+  oldValue:  { type: mongoose.Schema.Types.Mixed },
+  newValue:  { type: mongoose.Schema.Types.Mixed },
+  oldUnits:  { type: Number },
+  newUnits:  { type: Number },
+  oldAmount: { type: Number },
+  newAmount: { type: Number },
+  reason:    { type: String, default: '' },
+  editedBy:  { type: String, default: '' },
+  editedAt:  { type: Date, default: Date.now },
+}, { _id: false });
+
 const electricSchema = new mongoose.Schema({
   hostelId: { type: mongoose.Schema.Types.ObjectId, ref: 'Hostel', required: true, index: true },
   roomNumber: { type: Number, required: true },
@@ -26,6 +40,7 @@ const electricSchema = new mongoose.Schema({
   waivedReason:  { type: String, default: '' },
   waivedBy:      { type: String, default: '' },
   waivedAt:      { type: Date },
+  editHistory:   { type: [readingEditSchema], default: [] },
 }, { timestamps: true });
 
 electricSchema.pre('save', function(next) {

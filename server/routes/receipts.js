@@ -17,8 +17,14 @@ const getHostelId = async (req) => {
 };
 
 router.get('/next-numbers',             ctrl.nextNumbers);
+router.get('/collection-summary',       ctrl.collectionSummary);
 router.post('/reset-serial',            ctrl.resetSerial);
 router.patch('/:id/clear-due',          ctrl.clearDue);
+// Installments — several payments (each with its own method / reference) against one bill
+router.get('/:id/installments',         ctrl.getInstallments);
+router.post('/:id/installments',        ctrl.addInstallment);
+router.put('/:id/installment',          ctrl.editInstallment);
+router.delete('/:id/installment',       ctrl.deleteInstallment);
 router.get('/room/:roomNumber/summary', ctrl.roomSummary);
 router.get('/room/:roomNumber',         ctrl.byRoom);
 router.get('/',                         ctrl.list);

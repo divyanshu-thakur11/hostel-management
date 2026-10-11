@@ -3,6 +3,7 @@ const ArchivedMember = require('../models/ArchivedMember');
 const Hostel = require('../models/Hostel');
 const Room = require('../models/Room');
 const audit = require('../services/audit');
+const { recordVacate } = require('../services/settlements');
 const notify = require('../services/notifications');
 const validate = require('../utils/validate');
 const mongoose = require('mongoose');
@@ -239,6 +240,7 @@ exports.vacate = async (req, res, next) => {
     const obj = member.toObject(); delete obj._id;
     const archived = await ArchivedMember.create({ ...obj, originalId: member._id.toString(), vacatedOn: new Date(), vacatedReason: req.body.reason || 'Left hostel', originalCreatedAt: member.createdAt });
     await Member.findByIdAndDelete(req.params.id);
+    await recordVacate({ hostelId: member.hostelId, member, reason: req.body.reason, user: req.user }); // keeps their financial record
     await audit.log({ hostelId: member.hostelId, action: 'VACATE_MEMBER', entity: 'member', entityId: member._id, description: `${member.name} vacated Room ${member.roomNumber}. Reason: ${req.body.reason || 'Left hostel'}`, user: req.user });
     await notify.create({ hostelId: member.hostelId, type: 'member_left', title: `Member left: ${member.name}`, message: `${member.name} vacated Room ${member.roomNumber}`, memberId: member._id, memberName: member.name, roomNumber: member.roomNumber, priority: 'low' });
     if (session) await session.commitTransaction();
